@@ -1,20 +1,62 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Twój Spokój
 
-# Run and deploy your AI Studio app
+Aplikacja do planowania budżetu domowego dla par, której celem jest spokój, jasność i świadomość finansowa.
 
-This contains everything you need to run your app locally.
+## Filozofia
 
-View your app in AI Studio: https://ai.studio/apps/drive/1j7RIoz5N8Uz-e23S_1n-NZk2OZKl8r3n
+- **Spokój, nie kontrola** — brak gamifikacji, streaków, porównań
+- **Świadomość, nie automatyzacja** — ręczne wpisywanie buduje nawyk
+- **Wspólnota, nie rywalizacja** — jeden wspólny budżet
+- **Sygnały, nie blokady** — przekroczenie to informacja, nie porażka
 
-## Run Locally
+## Uruchomienie lokalne
 
-**Prerequisites:**  Node.js
+**Wymagania:** Node.js 18+
 
+```bash
+npm install
+npm run dev
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Aplikacja uruchomi się pod adresem `http://localhost:5173`
+
+## Stack technologiczny
+
+- React 18 + TypeScript
+- Vite
+- Tailwind CSS
+- React Router v6
+- Recharts
+- Lucide Icons
+
+## Dokumentacja
+
+Szczegółowa dokumentacja projektowa znajduje się w katalogu `/docs`:
+
+| Dokument | Opis |
+|----------|------|
+| [DESIGN.md](docs/DESIGN.md) | Kompleksowa dokumentacja projektowa — filozofia, architektura, modele danych, flow użytkownika |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architektura techniczna — diagramy, komponenty, persystencja |
+| [UX-GUIDELINES.md](docs/UX-GUIDELINES.md) | Wytyczne UX — ton komunikacji, kolorystyka, anty-wzorce |
+
+## Struktura projektu
+
+```
+src/
+├── components/
+│   ├── ui/               # Komponenty bazowe
+│   ├── Dashboard.tsx     # Główny widok
+│   ├── BudgetSetup.tsx   # Planowanie miesiąca
+│   ├── AddTransaction.tsx # Dodawanie wydatków
+│   ├── MonthReview.tsx   # Statystyki
+│   └── Layout.tsx        # Shell nawigacyjny
+├── context/
+│   └── BudgetContext.tsx # Stan globalny
+├── types.ts              # Definicje TypeScript
+├── constants.ts          # Formatery, helpery
+└── App.tsx               # Router
+```
+
+## Licencja
+
+Projekt prywatny.
