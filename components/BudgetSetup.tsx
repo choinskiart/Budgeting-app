@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBudget } from '../context/BudgetContext';
 import { CURRENCY_FORMATTER, getMonthName } from '../constants';
-import { ArrowLeft, Save, AlertCircle, Wallet, PiggyBank, ArrowDownCircle } from 'lucide-react';
+import { ArrowLeft, Save, AlertCircle, Wallet, PiggyBank, ArrowDownCircle, RotateCcw } from 'lucide-react';
 
 const BudgetSetup: React.FC = () => {
   const navigate = useNavigate();
-  const { state, updateMonthConfig, updateCategoryLimit, getCreateMonthConfig } = useBudget();
+  const { state, updateMonthConfig, updateCategoryLimit, getCreateMonthConfig, resetBudget } = useBudget();
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const monthId = state.currentMonthId;
   
   const [income, setIncome] = useState<number>(0);
@@ -59,8 +60,14 @@ const BudgetSetup: React.FC = () => {
         id: monthId,
         totalIncome: income,
         // We keep this purely for legacy structure compatibility, but logic is now Category-based
-        savingsGoals: [] 
+        savingsGoals: []
     });
+    navigate('/');
+  };
+
+  const handleReset = async () => {
+    await resetBudget();
+    setShowResetConfirm(false);
     navigate('/');
   };
 
@@ -78,11 +85,44 @@ const BudgetSetup: React.FC = () => {
             <button onClick={() => navigate(-1)} className="text-neutral-500 hover:text-neutral-800 transition-colors p-2 -ml-2 rounded-full hover:bg-neutral-50">
                 <ArrowLeft size={24} />
             </button>
-            <div>
+            <div className="flex-1">
                 <h1 className="font-medium text-neutral-800 leading-tight text-lg">Planer Budżetu</h1>
                 <p className="text-xs text-neutral-400">{getMonthName(monthId)}</p>
             </div>
+            <button
+                onClick={() => setShowResetConfirm(true)}
+                className="text-neutral-400 hover:text-rose-500 transition-colors p-2 rounded-full hover:bg-rose-50"
+                title="Resetuj budżet"
+            >
+                <RotateCcw size={20} />
+            </button>
         </div>
+
+        {/* Reset Confirmation Modal */}
+        {showResetConfirm && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
+                    <h2 className="text-lg font-semibold text-neutral-800 mb-2">Resetuj budżet</h2>
+                    <p className="text-sm text-neutral-600 mb-6">
+                        Wszystkie dane zostaną usunięte: transakcje, limity kategorii i konfiguracja. Tej operacji nie można cofnąć.
+                    </p>
+                    <div className="flex gap-3">
+                        <button
+                            onClick={() => setShowResetConfirm(false)}
+                            className="flex-1 py-2.5 px-4 border border-neutral-200 rounded-xl text-neutral-700 font-medium hover:bg-neutral-50 transition-colors"
+                        >
+                            Anuluj
+                        </button>
+                        <button
+                            onClick={handleReset}
+                            className="flex-1 py-2.5 px-4 bg-rose-500 text-white rounded-xl font-medium hover:bg-rose-600 transition-colors"
+                        >
+                            Resetuj
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
 
         <div className="flex-1 overflow-y-auto">
             <div className="p-6 md:p-8 grid grid-cols-1 lg:grid-cols-2 gap-8 md:pb-32">

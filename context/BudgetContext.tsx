@@ -14,6 +14,7 @@ interface BudgetContextType {
   updateMonthConfig: (config: MonthConfig) => Promise<void>;
   updateCategoryLimit: (categoryId: string, limit: number) => Promise<void>;
   getCreateMonthConfig: (monthId: string) => MonthConfig;
+  resetBudget: () => Promise<void>;
 }
 
 const BudgetContext = createContext<BudgetContextType | undefined>(undefined);
@@ -223,6 +224,23 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     await syncToFirestore({ categories: newCategories });
   }, [state.categories, syncToFirestore]);
 
+  const resetBudget = useCallback(async () => {
+    const defaultState = getDefaultState();
+
+    // Optimistic update
+    setState(defaultState);
+
+    // Sync to Firestore
+    await syncToFirestore({
+      configs: defaultState.configs,
+      categories: defaultState.categories,
+      transactions: defaultState.transactions,
+    });
+
+    // Clear localStorage backup
+    localStorage.removeItem('spokoj-app-backup');
+  }, [syncToFirestore]);
+
   return (
     <BudgetContext.Provider
       value={{
@@ -235,6 +253,7 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         updateMonthConfig,
         updateCategoryLimit,
         getCreateMonthConfig,
+        resetBudget,
       }}
     >
       {children}
