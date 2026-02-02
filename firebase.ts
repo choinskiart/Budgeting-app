@@ -1,15 +1,14 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 
-// Firebase configuration
-// WAŻNE: Zamień te wartości na swoje z Firebase Console
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "YOUR_API_KEY",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "YOUR_PROJECT.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "YOUR_PROJECT_ID",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "YOUR_PROJECT.appspot.com",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "YOUR_SENDER_ID",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "YOUR_APP_ID"
+  apiKey: "AIzaSyCICxqd_ioAe1lJ61E3MnI2Wfrt6XX0kVY",
+  authDomain: "budgeting-app-3decf.firebaseapp.com",
+  projectId: "budgeting-app-3decf",
+  storageBucket: "budgeting-app-3decf.firebasestorage.app",
+  messagingSenderId: "147661255003",
+  appId: "1:147661255003:web:b5bc9888163b3c33cc2a7e",
+  measurementId: "G-7QKCJ08Z8L"
 };
 
 // Initialize Firebase
