@@ -3,10 +3,10 @@ import { useBudget } from '../context/BudgetContext';
 import { CURRENCY_FORMATTER, getMonthName, PERCENTAGE_FORMATTER } from '../constants';
 import { ProgressBar } from './ui/ProgressBar';
 import { Link } from 'react-router-dom';
-import { Settings, PiggyBank } from 'lucide-react';
+import { Settings, PiggyBank, Wifi, WifiOff, Loader2 } from 'lucide-react';
 
 const Dashboard: React.FC = () => {
-  const { state } = useBudget();
+  const { state, isLoading, isOnline } = useBudget();
   const currentMonthId = state.currentMonthId;
 
   // Filter transactions for current month
@@ -47,12 +47,27 @@ const Dashboard: React.FC = () => {
     });
   }, [state.categories, currentTransactions]);
 
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="w-8 h-8 animate-spin text-calm-blue" />
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 md:p-10 space-y-8 animate-fade-in max-w-6xl mx-auto w-full pb-24 md:pb-10">
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-neutral-800 tracking-tight">Twój Spokój</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl md:text-3xl font-bold text-neutral-800 tracking-tight">Twój Spokój</h1>
+            {isOnline ? (
+              <Wifi size={16} className="text-emerald-500" />
+            ) : (
+              <WifiOff size={16} className="text-neutral-400" />
+            )}
+          </div>
           <p className="text-sm md:text-base text-neutral-500 capitalize mt-1">{getMonthName(currentMonthId)}</p>
         </div>
         <Link 

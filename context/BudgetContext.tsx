@@ -1,72 +1,140 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { doc, onSnapshot, setDoc, updateDoc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 import { AppState, Transaction, Category, MonthConfig, DEFAULT_CATEGORIES, INITIAL_SAVINGS_GOAL } from '../types';
 import { getCurrentMonthId } from '../constants';
 
 interface BudgetContextType {
   state: AppState;
-  addTransaction: (transaction: Omit<Transaction, 'id' | 'timestamp'>) => void;
-  editTransaction: (id: string, updated: Partial<Omit<Transaction, 'id' | 'timestamp'>>) => void;
-  deleteTransaction: (id: string) => void;
-  updateMonthConfig: (config: MonthConfig) => void;
-  updateCategoryLimit: (categoryId: string, limit: number) => void;
+  isLoading: boolean;
+  isOnline: boolean;
+  addTransaction: (transaction: Omit<Transaction, 'id' | 'timestamp'>) => Promise<void>;
+  editTransaction: (id: string, updated: Partial<Omit<Transaction, 'id' | 'timestamp'>>) => Promise<void>;
+  deleteTransaction: (id: string) => Promise<void>;
+  updateMonthConfig: (config: MonthConfig) => Promise<void>;
+  updateCategoryLimit: (categoryId: string, limit: number) => Promise<void>;
   getCreateMonthConfig: (monthId: string) => MonthConfig;
 }
 
 const BudgetContext = createContext<BudgetContextType | undefined>(undefined);
 
-const STORAGE_KEY = 'spokoj-app-data-v1';
+// Household ID - w przyszłości można dodać system logowania
+// Na razie używamy stałego ID dla jednego gospodarstwa domowego
+const HOUSEHOLD_ID = 'default-household';
+const BUDGET_DOC_PATH = `households/${HOUSEHOLD_ID}/data/budget`;
+
+const getDefaultState = (): AppState => ({
+  currentMonthId: getCurrentMonthId(),
+  configs: {},
+  categories: DEFAULT_CATEGORIES,
+  transactions: [],
+});
 
 export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [state, setState] = useState<AppState>(() => {
-    try {
-        const stored = localStorage.getItem(STORAGE_KEY);
-        const currentMonth = getCurrentMonthId();
-        
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          
-          // SAFETY: Default to empty/default structures if parsed data is missing fields
-          // This prevents "resetting" the budget if one field is malformed.
-          let categories = Array.isArray(parsed.categories) ? parsed.categories : DEFAULT_CATEGORIES;
-          const configs = parsed.configs || {};
-          const transactions = Array.isArray(parsed.transactions) ? parsed.transactions : [];
+  const [state, setState] = useState<AppState>(getDefaultState);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isOnline, setIsOnline] = useState(true);
 
-          // MIGRATION: Ensure "savings" category exists if it's missing (for existing users)
-          // We use defensive coding (optional chaining/checks) to avoid crashes
-          const hasSavings = categories.some((c: any) => c.id === 'savings');
+  // Realtime listener for Firestore
+  useEffect(() => {
+    const docRef = doc(db, BUDGET_DOC_PATH);
+
+    const unsubscribe = onSnapshot(
+      docRef,
+      (snapshot) => {
+        setIsOnline(true);
+        setIsLoading(false);
+
+        if (snapshot.exists()) {
+          const data = snapshot.data() as Partial<AppState>;
+
+          // Merge with defaults to ensure all fields exist
+          let categories = Array.isArray(data.categories) ? data.categories : DEFAULT_CATEGORIES;
+
+          // Ensure savings category exists
+          const hasSavings = categories.some((c: Category) => c.id === 'savings');
           if (!hasSavings) {
-              const savingsCat = DEFAULT_CATEGORIES.find(c => c.id === 'savings');
-              if (savingsCat) {
-                  categories = [...categories, savingsCat];
-              }
+            const savingsCat = DEFAULT_CATEGORIES.find(c => c.id === 'savings');
+            if (savingsCat) {
+              categories = [...categories, savingsCat];
+            }
           }
 
-          return { 
-              currentMonthId: currentMonth,
-              configs: configs,
-              categories: categories,
-              transactions: transactions
-          };
+          setState({
+            currentMonthId: getCurrentMonthId(),
+            configs: data.configs || {},
+            categories: categories,
+            transactions: Array.isArray(data.transactions) ? data.transactions : [],
+          });
+        } else {
+          // First time - initialize with defaults
+          const defaultState = getDefaultState();
+          setState(defaultState);
+          // Save initial state to Firestore
+          setDoc(docRef, {
+            configs: defaultState.configs,
+            categories: defaultState.categories,
+            transactions: defaultState.transactions,
+          });
         }
-    } catch (e) {
-        console.error("Błąd odczytu danych (odzyskiwanie stanu domyślnego):", e);
-        // In case of critical failure, we fall back to default to allow app to start,
-        // but this log helps debug. Ideally we wouldn't wipe data, but if JSON is invalid, we must.
-    }
-    
-    return {
-      currentMonthId: getCurrentMonthId(),
-      configs: {},
-      categories: DEFAULT_CATEGORIES,
-      transactions: [],
-    };
-  });
+      },
+      (error) => {
+        console.error('Firestore sync error:', error);
+        setIsOnline(false);
+        setIsLoading(false);
 
+        // Fallback to localStorage if offline
+        try {
+          const stored = localStorage.getItem('spokoj-app-backup');
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            setState({
+              currentMonthId: getCurrentMonthId(),
+              configs: parsed.configs || {},
+              categories: parsed.categories || DEFAULT_CATEGORIES,
+              transactions: parsed.transactions || [],
+            });
+          }
+        } catch (e) {
+          console.error('LocalStorage fallback error:', e);
+        }
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  // Backup to localStorage
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (!isLoading) {
+      localStorage.setItem('spokoj-app-backup', JSON.stringify({
+        configs: state.configs,
+        categories: state.categories,
+        transactions: state.transactions,
+      }));
+    }
+  }, [state, isLoading]);
+
+  const syncToFirestore = useCallback(async (updates: Partial<AppState>) => {
+    const docRef = doc(db, BUDGET_DOC_PATH);
+    try {
+      const snapshot = await getDoc(docRef);
+      if (snapshot.exists()) {
+        await updateDoc(docRef, updates);
+      } else {
+        await setDoc(docRef, {
+          configs: updates.configs ?? state.configs,
+          categories: updates.categories ?? state.categories,
+          transactions: updates.transactions ?? state.transactions,
+        });
+      }
+    } catch (error) {
+      console.error('Error syncing to Firestore:', error);
+      setIsOnline(false);
+    }
   }, [state]);
 
-  const getCreateMonthConfig = (monthId: string): MonthConfig => {
+  const getCreateMonthConfig = useCallback((monthId: string): MonthConfig => {
     if (state.configs[monthId]) {
       return state.configs[monthId];
     }
@@ -75,59 +143,92 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       totalIncome: 15000,
       savingsGoals: [INITIAL_SAVINGS_GOAL],
     };
-  };
+  }, [state.configs]);
 
-  const updateMonthConfig = (config: MonthConfig) => {
-    setState((prev) => ({
+  const updateMonthConfig = useCallback(async (config: MonthConfig) => {
+    const newConfigs = {
+      ...state.configs,
+      [config.id]: config,
+    };
+
+    // Optimistic update
+    setState(prev => ({
       ...prev,
-      configs: {
-        ...prev.configs,
-        [config.id]: config,
-      },
+      configs: newConfigs,
     }));
-  };
 
-  const addTransaction = (input: Omit<Transaction, 'id' | 'timestamp'>) => {
+    // Sync to Firestore
+    await syncToFirestore({ configs: newConfigs });
+  }, [state.configs, syncToFirestore]);
+
+  const addTransaction = useCallback(async (input: Omit<Transaction, 'id' | 'timestamp'>) => {
     const newTx: Transaction = {
       ...input,
       id: crypto.randomUUID(),
       timestamp: Date.now(),
     };
-    setState((prev) => ({
-      ...prev,
-      transactions: [newTx, ...prev.transactions],
-    }));
-  };
 
-  const editTransaction = (id: string, updated: Partial<Omit<Transaction, 'id' | 'timestamp'>>) => {
-    setState((prev) => ({
-      ...prev,
-      transactions: prev.transactions.map((t) =>
-        t.id === id ? { ...t, ...updated } : t
-      ),
-    }));
-  };
+    const newTransactions = [newTx, ...state.transactions];
 
-  const deleteTransaction = (id: string) => {
-    setState((prev) => ({
+    // Optimistic update
+    setState(prev => ({
       ...prev,
-      transactions: prev.transactions.filter((t) => t.id !== id),
+      transactions: newTransactions,
     }));
-  };
 
-  const updateCategoryLimit = (categoryId: string, limit: number) => {
-    setState((prev) => ({
+    // Sync to Firestore
+    await syncToFirestore({ transactions: newTransactions });
+  }, [state.transactions, syncToFirestore]);
+
+  const editTransaction = useCallback(async (id: string, updated: Partial<Omit<Transaction, 'id' | 'timestamp'>>) => {
+    const newTransactions = state.transactions.map((t) =>
+      t.id === id ? { ...t, ...updated } : t
+    );
+
+    // Optimistic update
+    setState(prev => ({
       ...prev,
-      categories: prev.categories.map((c) =>
-        c.id === categoryId ? { ...c, limit } : c
-      ),
+      transactions: newTransactions,
     }));
-  };
+
+    // Sync to Firestore
+    await syncToFirestore({ transactions: newTransactions });
+  }, [state.transactions, syncToFirestore]);
+
+  const deleteTransaction = useCallback(async (id: string) => {
+    const newTransactions = state.transactions.filter((t) => t.id !== id);
+
+    // Optimistic update
+    setState(prev => ({
+      ...prev,
+      transactions: newTransactions,
+    }));
+
+    // Sync to Firestore
+    await syncToFirestore({ transactions: newTransactions });
+  }, [state.transactions, syncToFirestore]);
+
+  const updateCategoryLimit = useCallback(async (categoryId: string, limit: number) => {
+    const newCategories = state.categories.map((c) =>
+      c.id === categoryId ? { ...c, limit } : c
+    );
+
+    // Optimistic update
+    setState(prev => ({
+      ...prev,
+      categories: newCategories,
+    }));
+
+    // Sync to Firestore
+    await syncToFirestore({ categories: newCategories });
+  }, [state.categories, syncToFirestore]);
 
   return (
     <BudgetContext.Provider
       value={{
         state,
+        isLoading,
+        isOnline,
         addTransaction,
         editTransaction,
         deleteTransaction,
