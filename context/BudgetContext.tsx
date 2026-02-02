@@ -15,6 +15,8 @@ interface BudgetContextType {
   updateCategoryLimit: (categoryId: string, limit: number) => Promise<void>;
   getCreateMonthConfig: (monthId: string) => MonthConfig;
   resetBudget: () => Promise<void>;
+  addCategory: (name: string, limit: number) => Promise<void>;
+  deleteCategory: (id: string) => Promise<void>;
 }
 
 const BudgetContext = createContext<BudgetContextType | undefined>(undefined);
@@ -241,6 +243,51 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     localStorage.removeItem('spokoj-app-backup');
   }, [syncToFirestore]);
 
+  const addCategory = useCallback(async (name: string, limit: number) => {
+    const newCategory: Category = {
+      id: crypto.randomUUID(),
+      name,
+      limit,
+      icon: 'Tag',
+      isSystem: false,
+    };
+
+    const newCategories = [...state.categories.filter(c => c.id !== 'savings'), newCategory];
+    // Keep savings at the end
+    const savingsCat = state.categories.find(c => c.id === 'savings');
+    if (savingsCat) {
+      newCategories.push(savingsCat);
+    }
+
+    // Optimistic update
+    setState(prev => ({
+      ...prev,
+      categories: newCategories,
+    }));
+
+    // Sync to Firestore
+    await syncToFirestore({ categories: newCategories });
+  }, [state.categories, syncToFirestore]);
+
+  const deleteCategory = useCallback(async (id: string) => {
+    // Don't allow deleting system categories or savings
+    const category = state.categories.find(c => c.id === id);
+    if (!category || category.isSystem || id === 'savings') {
+      return;
+    }
+
+    const newCategories = state.categories.filter(c => c.id !== id);
+
+    // Optimistic update
+    setState(prev => ({
+      ...prev,
+      categories: newCategories,
+    }));
+
+    // Sync to Firestore
+    await syncToFirestore({ categories: newCategories });
+  }, [state.categories, syncToFirestore]);
+
   return (
     <BudgetContext.Provider
       value={{
@@ -254,6 +301,8 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         updateCategoryLimit,
         getCreateMonthConfig,
         resetBudget,
+        addCategory,
+        deleteCategory,
       }}
     >
       {children}

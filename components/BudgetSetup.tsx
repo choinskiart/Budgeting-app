@@ -2,65 +2,76 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBudget } from '../context/BudgetContext';
 import { CURRENCY_FORMATTER, getMonthName } from '../constants';
-import { ArrowLeft, Save, AlertCircle, Wallet, PiggyBank, ArrowDownCircle, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Save, AlertCircle, Wallet, PiggyBank, ArrowDownCircle, RotateCcw, Plus, Trash2 } from 'lucide-react';
 
 const BudgetSetup: React.FC = () => {
   const navigate = useNavigate();
-  const { state, updateMonthConfig, updateCategoryLimit, getCreateMonthConfig, resetBudget } = useBudget();
+  const { state, updateMonthConfig, updateCategoryLimit, getCreateMonthConfig, resetBudget, addCategory, deleteCategory } = useBudget();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryLimit, setNewCategoryLimit] = useState('');
   const monthId = state.currentMonthId;
-  
-  const [income, setIncome] = useState<number>(0);
-  const [localLimits, setLocalLimits] = useState<Record<string, number>>({});
-  
+
+  const [income, setIncome] = useState<string>('');
+  const [localLimits, setLocalLimits] = useState<Record<string, string>>({});
+
   useEffect(() => {
     const config = getCreateMonthConfig(monthId);
-    setIncome(config.totalIncome);
-    
-    const limits: Record<string, number> = {};
+    setIncome(config.totalIncome.toString());
+
+    const limits: Record<string, string> = {};
     state.categories.forEach(c => {
-      limits[c.id] = c.limit;
+      limits[c.id] = c.limit.toString();
     });
     setLocalLimits(limits);
   }, [monthId, getCreateMonthConfig, state.categories]);
 
   const handleLimitChange = (id: string, val: string) => {
-    const num = parseInt(val) || 0;
-    setLocalLimits(prev => ({ ...prev, [id]: num }));
+    // Allow empty string or valid numbers
+    if (val === '' || /^\d+$/.test(val)) {
+      setLocalLimits(prev => ({ ...prev, [id]: val }));
+    }
+  };
+
+  const getNumericValue = (val: string): number => {
+    return parseInt(val) || 0;
   };
 
   // Calculations
   const savingsCategoryId = 'savings';
-  const savingsLimit = localLimits[savingsCategoryId] || 0;
-  
+  const savingsLimit = getNumericValue(localLimits[savingsCategoryId] || '0');
+
   // Sum of all categories EXCEPT savings
   const expensesSum = Object.entries(localLimits)
     .filter(([id]) => id !== savingsCategoryId)
-    .reduce((acc, [_, limit]) => acc + (limit as number), 0);
+    .reduce((acc, [_, limit]) => acc + getNumericValue(limit), 0);
 
   // Total allocated including savings
   const totalAllocated = expensesSum + savingsLimit;
-  
+
   // What is left from income to be assigned
-  const unassigned = income - totalAllocated;
+  const incomeNum = getNumericValue(income);
+  const unassigned = incomeNum - totalAllocated;
 
   // Potential savings (Income - Expenses)
-  const potentialSavings = Math.max(0, income - expensesSum);
+  const potentialSavings = Math.max(0, incomeNum - expensesSum);
 
   const handleSetSavingsToPotential = () => {
-    setLocalLimits(prev => ({ ...prev, [savingsCategoryId]: potentialSavings }));
+    setLocalLimits(prev => ({ ...prev, [savingsCategoryId]: potentialSavings.toString() }));
   };
 
-  const handleSave = () => {
-    Object.entries(localLimits).forEach(([id, limit]) => {
-      updateCategoryLimit(id, limit);
-    });
+  const handleSave = async () => {
+    // Update all category limits
+    const updatePromises = Object.entries(localLimits).map(([id, limit]) =>
+      updateCategoryLimit(id, getNumericValue(limit))
+    );
+    await Promise.all(updatePromises);
 
-    updateMonthConfig({
-        id: monthId,
-        totalIncome: income,
-        // We keep this purely for legacy structure compatibility, but logic is now Category-based
-        savingsGoals: []
+    await updateMonthConfig({
+      id: monthId,
+      totalIncome: incomeNum,
+      savingsGoals: []
     });
     navigate('/');
   };
@@ -71,15 +82,28 @@ const BudgetSetup: React.FC = () => {
     navigate('/');
   };
 
+  const handleAddCategory = async () => {
+    if (newCategoryName.trim()) {
+      await addCategory(newCategoryName.trim(), getNumericValue(newCategoryLimit));
+      setNewCategoryName('');
+      setNewCategoryLimit('');
+      setShowAddCategory(false);
+    }
+  };
+
+  const handleDeleteCategory = async (id: string) => {
+    await deleteCategory(id);
+  };
+
   const regularCategories = state.categories.filter(c => c.id !== savingsCategoryId);
   const savingsCategory = state.categories.find(c => c.id === savingsCategoryId);
 
   return (
     <div className="min-h-screen bg-white md:bg-neutral-50 md:py-8 flex flex-col items-center">
-      
+
       {/* Container for Desktop */}
       <div className="w-full md:max-w-5xl md:mx-auto bg-white md:rounded-3xl md:shadow-xl md:border md:border-neutral-100 overflow-hidden flex flex-col h-full md:h-auto">
-        
+
         {/* Header */}
         <div className="px-6 py-4 border-b border-neutral-100 flex items-center gap-4 sticky top-0 bg-white z-20 shadow-sm md:shadow-none">
             <button onClick={() => navigate(-1)} className="text-neutral-500 hover:text-neutral-800 transition-colors p-2 -ml-2 rounded-full hover:bg-neutral-50">
@@ -91,10 +115,10 @@ const BudgetSetup: React.FC = () => {
             </div>
             <button
                 onClick={() => setShowResetConfirm(true)}
-                className="text-neutral-400 hover:text-rose-500 transition-colors p-2 rounded-full hover:bg-rose-50"
-                title="Resetuj budżet"
+                className="text-rose-500 hover:text-rose-600 transition-colors px-3 py-1.5 rounded-lg hover:bg-rose-50 flex items-center gap-2 text-sm font-medium"
             >
-                <RotateCcw size={20} />
+                <RotateCcw size={16} />
+                <span className="hidden sm:inline">Resetuj</span>
             </button>
         </div>
 
@@ -124,9 +148,65 @@ const BudgetSetup: React.FC = () => {
             </div>
         )}
 
+        {/* Add Category Modal */}
+        {showAddCategory && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
+                    <h2 className="text-lg font-semibold text-neutral-800 mb-4">Nowa kategoria</h2>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="text-sm font-medium text-neutral-600 mb-1 block">Nazwa</label>
+                            <input
+                                type="text"
+                                value={newCategoryName}
+                                onChange={(e) => setNewCategoryName(e.target.value)}
+                                placeholder="np. Subskrypcje"
+                                className="w-full p-3 border border-neutral-200 rounded-xl outline-none focus:ring-2 focus:ring-calm-blue focus:border-transparent"
+                                autoFocus
+                            />
+                        </div>
+                        <div>
+                            <label className="text-sm font-medium text-neutral-600 mb-1 block">Limit miesięczny</label>
+                            <input
+                                type="text"
+                                inputMode="numeric"
+                                value={newCategoryLimit}
+                                onChange={(e) => {
+                                    if (e.target.value === '' || /^\d+$/.test(e.target.value)) {
+                                        setNewCategoryLimit(e.target.value);
+                                    }
+                                }}
+                                placeholder="0"
+                                className="w-full p-3 border border-neutral-200 rounded-xl outline-none focus:ring-2 focus:ring-calm-blue focus:border-transparent"
+                            />
+                        </div>
+                    </div>
+                    <div className="flex gap-3 mt-6">
+                        <button
+                            onClick={() => {
+                                setShowAddCategory(false);
+                                setNewCategoryName('');
+                                setNewCategoryLimit('');
+                            }}
+                            className="flex-1 py-2.5 px-4 border border-neutral-200 rounded-xl text-neutral-700 font-medium hover:bg-neutral-50 transition-colors"
+                        >
+                            Anuluj
+                        </button>
+                        <button
+                            onClick={handleAddCategory}
+                            disabled={!newCategoryName.trim()}
+                            className="flex-1 py-2.5 px-4 bg-calm-blue text-white rounded-xl font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                        >
+                            Dodaj
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+
         <div className="flex-1 overflow-y-auto">
             <div className="p-6 md:p-8 grid grid-cols-1 lg:grid-cols-2 gap-8 md:pb-32">
-                
+
                 {/* LEFT COLUMN: Inputs */}
                 <div className="space-y-8">
                     {/* 1. Income */}
@@ -136,10 +216,15 @@ const BudgetSetup: React.FC = () => {
                             1. Ile zarobimy?
                         </label>
                         <div className="relative">
-                            <input 
-                                type="number"
+                            <input
+                                type="text"
+                                inputMode="numeric"
                                 value={income}
-                                onChange={(e) => setIncome(Number(e.target.value))}
+                                onChange={(e) => {
+                                    if (e.target.value === '' || /^\d+$/.test(e.target.value)) {
+                                        setIncome(e.target.value);
+                                    }
+                                }}
                                 className="w-full bg-transparent text-3xl font-bold text-neutral-800 outline-none placeholder-neutral-300"
                                 placeholder="0"
                             />
@@ -153,29 +238,48 @@ const BudgetSetup: React.FC = () => {
                             <label className="text-sm font-semibold text-neutral-700">2. Wydatki (Kategorie)</label>
                             <span className="text-xs text-neutral-400">Suma: {CURRENCY_FORMATTER.format(expensesSum)}</span>
                         </div>
-                        
+
                         <div className="space-y-3">
                             {regularCategories.map(cat => (
-                                <div key={cat.id} className="flex items-center justify-between p-4 bg-white border border-neutral-100 rounded-xl shadow-sm focus-within:ring-1 focus-within:ring-calm-blue transition-shadow hover:bg-neutral-50">
+                                <div key={cat.id} className="flex items-center justify-between p-4 bg-white border border-neutral-100 rounded-xl shadow-sm focus-within:ring-1 focus-within:ring-calm-blue transition-shadow hover:bg-neutral-50 group">
                                     <span className="text-sm font-medium text-neutral-700">{cat.name}</span>
                                     <div className="flex items-center gap-2">
                                         <input
-                                            type="number"
-                                            value={localLimits[cat.id] || 0}
+                                            type="text"
+                                            inputMode="numeric"
+                                            value={localLimits[cat.id] || ''}
                                             onChange={(e) => handleLimitChange(cat.id, e.target.value)}
+                                            placeholder="0"
                                             className="w-24 p-2 text-right bg-transparent border-b border-transparent focus:border-calm-blue rounded-none font-medium text-neutral-800 outline-none transition-colors"
                                         />
                                         <span className="text-xs text-neutral-400">zł</span>
+                                        {!cat.isSystem && (
+                                            <button
+                                                onClick={() => handleDeleteCategory(cat.id)}
+                                                className="opacity-0 group-hover:opacity-100 text-neutral-300 hover:text-rose-500 transition-all p-1"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             ))}
                         </div>
+
+                        {/* Add Category Button */}
+                        <button
+                            onClick={() => setShowAddCategory(true)}
+                            className="w-full p-4 border-2 border-dashed border-neutral-200 rounded-xl text-neutral-400 hover:text-calm-blue hover:border-calm-blue transition-colors flex items-center justify-center gap-2"
+                        >
+                            <Plus size={18} />
+                            Dodaj kategorię
+                        </button>
                     </div>
                 </div>
 
                 {/* RIGHT COLUMN: Savings & Logic (Sticky on Desktop) */}
                 <div className="space-y-8 lg:border-l lg:pl-8 lg:border-dashed lg:border-neutral-200">
-                    
+
                     {/* 3. Savings Section */}
                     {savingsCategory && (
                         <div className="space-y-4">
@@ -183,13 +287,13 @@ const BudgetSetup: React.FC = () => {
                                 <PiggyBank className="text-emerald-500" size={20} />
                                 <label className="text-sm font-semibold text-neutral-800">3. Oszczędności</label>
                             </div>
-                            
+
                             {/* Smart Suggestion */}
                             <div className="bg-emerald-50 border border-emerald-100 p-5 rounded-2xl mb-4">
                                 <p className="text-xs text-emerald-800 mb-1 font-medium">Zostaje (Przychód - Wydatki):</p>
                                 <div className="flex justify-between items-center">
                                     <span className="text-2xl font-bold text-emerald-700">{CURRENCY_FORMATTER.format(potentialSavings)}</span>
-                                    <button 
+                                    <button
                                         onClick={handleSetSavingsToPotential}
                                         className="bg-white text-emerald-600 text-xs font-medium px-4 py-2 rounded-lg border border-emerald-200 shadow-sm hover:bg-emerald-50 active:scale-95 transition-all flex items-center gap-2"
                                     >
@@ -203,16 +307,18 @@ const BudgetSetup: React.FC = () => {
                                 <span className="text-sm font-medium text-neutral-800">{savingsCategory.name}</span>
                                 <div className="flex items-center gap-2">
                                     <input
-                                        type="number"
-                                        value={localLimits[savingsCategoryId] || 0}
+                                        type="text"
+                                        inputMode="numeric"
+                                        value={localLimits[savingsCategoryId] || ''}
                                         onChange={(e) => handleLimitChange(savingsCategoryId, e.target.value)}
+                                        placeholder="0"
                                         className="w-28 p-2 text-right bg-emerald-50 rounded-md font-bold text-emerald-800 outline-none focus:bg-white focus:ring-2 focus:ring-emerald-200 transition-colors"
                                     />
                                     <span className="text-xs text-neutral-400">zł</span>
                                 </div>
                             </div>
                             <p className="text-xs text-neutral-400 leading-relaxed">
-                                Aby budżet był "wyzerowany", nadwyżkę przypisujemy do Oszczędności. 
+                                Aby budżet był "wyzerowany", nadwyżkę przypisujemy do Oszczędności.
                                 Traktujemy to jak "zobowiązanie wobec przyszłości".
                             </p>
                         </div>
@@ -226,7 +332,7 @@ const BudgetSetup: React.FC = () => {
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 max-w-4xl mx-auto">
                 {/* Balance Indicator */}
                 <div className={`p-3 md:px-6 md:py-4 rounded-xl flex flex-1 justify-between items-center transition-colors ${
-                    unassigned === 0 ? 'bg-emerald-600 text-white shadow-emerald-200 shadow-lg' : 
+                    unassigned === 0 ? 'bg-emerald-600 text-white shadow-emerald-200 shadow-lg' :
                     unassigned > 0 ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
                 }`}>
                     <div className="flex flex-col">
@@ -240,7 +346,7 @@ const BudgetSetup: React.FC = () => {
                     {unassigned === 0 ? <PiggyBank size={24} className="text-emerald-100 md:w-8 md:h-8" /> : <AlertCircle size={20} className="md:w-6 md:h-6" />}
                 </div>
 
-                <button 
+                <button
                     onClick={handleSave}
                     disabled={unassigned < 0}
                     className="w-full md:w-auto md:px-12 py-3.5 md:py-4 bg-neutral-900 text-white rounded-xl font-semibold hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex justify-center items-center gap-2 shadow-lg"
