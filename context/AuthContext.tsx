@@ -8,11 +8,9 @@ import {
 import { auth, googleProvider } from '../firebase';
 
 // Lista dozwolonych emaili - tylko te osoby mogą się zalogować
-// Dodaj tutaj swój email i email Marleny
 const ALLOWED_EMAILS = [
-  'artur.choinski@gmail.com',  // Zmień na swój prawdziwy email
-  'marlena@example.com',       // Zmień na email Marleny
-  // Dodaj więcej emaili jeśli potrzeba
+  'choinski.art@gmail.com',
+  'marlenaoza@gmail.com',
 ];
 
 interface AuthContextType {
