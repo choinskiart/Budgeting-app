@@ -13,6 +13,7 @@ interface BudgetContextType {
   deleteTransaction: (id: string) => Promise<void>;
   updateMonthConfig: (config: MonthConfig) => Promise<void>;
   updateCategoryLimit: (categoryId: string, limit: number) => Promise<void>;
+  updateAllCategoryLimits: (limits: Record<string, number>) => Promise<void>;
   getCreateMonthConfig: (monthId: string) => MonthConfig;
   resetBudget: () => Promise<void>;
   addCategory: (name: string, limit: number) => Promise<void>;
@@ -226,6 +227,22 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     await syncToFirestore({ categories: newCategories });
   }, [state.categories, syncToFirestore]);
 
+  const updateAllCategoryLimits = useCallback(async (limits: Record<string, number>) => {
+    const newCategories = state.categories.map((c) => ({
+      ...c,
+      limit: limits[c.id] !== undefined ? limits[c.id] : c.limit
+    }));
+
+    // Optimistic update
+    setState(prev => ({
+      ...prev,
+      categories: newCategories,
+    }));
+
+    // Sync to Firestore
+    await syncToFirestore({ categories: newCategories });
+  }, [state.categories, syncToFirestore]);
+
   const resetBudget = useCallback(async () => {
     const defaultState = getDefaultState();
 
@@ -299,6 +316,7 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         deleteTransaction,
         updateMonthConfig,
         updateCategoryLimit,
+        updateAllCategoryLimits,
         getCreateMonthConfig,
         resetBudget,
         addCategory,

@@ -6,7 +6,7 @@ import { ArrowLeft, Save, AlertCircle, Wallet, PiggyBank, ArrowDownCircle, Rotat
 
 const BudgetSetup: React.FC = () => {
   const navigate = useNavigate();
-  const { state, updateMonthConfig, updateCategoryLimit, getCreateMonthConfig, resetBudget, addCategory, deleteCategory } = useBudget();
+  const { state, updateMonthConfig, updateAllCategoryLimits, getCreateMonthConfig, resetBudget, addCategory, deleteCategory } = useBudget();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -62,11 +62,12 @@ const BudgetSetup: React.FC = () => {
   };
 
   const handleSave = async () => {
-    // Update all category limits
-    const updatePromises = Object.entries(localLimits).map(([id, limit]) =>
-      updateCategoryLimit(id, getNumericValue(limit))
-    );
-    await Promise.all(updatePromises);
+    // Convert all string limits to numbers and update in a single call
+    const limits: Record<string, number> = {};
+    Object.entries(localLimits).forEach(([id, limit]) => {
+      limits[id] = getNumericValue(limit);
+    });
+    await updateAllCategoryLimits(limits);
 
     await updateMonthConfig({
       id: monthId,
