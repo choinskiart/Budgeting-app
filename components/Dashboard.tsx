@@ -4,6 +4,7 @@ import { CURRENCY_FORMATTER, getMonthName, PERCENTAGE_FORMATTER } from '../const
 import { ProgressBar } from './ui/ProgressBar';
 import { Link } from 'react-router-dom';
 import { Settings, PiggyBank, Wifi, WifiOff, Loader2 } from 'lucide-react';
+import { CategoryIcon } from './ui/CategoryIcon';
 
 const Dashboard: React.FC = () => {
   const { state, isLoading, isOnline } = useBudget();
@@ -122,7 +123,7 @@ const Dashboard: React.FC = () => {
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-3">
                         <div className={`p-2 rounded-lg ${cat.isSavings ? 'bg-emerald-100 text-emerald-600' : 'bg-neutral-100 text-neutral-500'}`}>
-                            {cat.isSavings ? <PiggyBank size={18} /> : <span className="text-xs font-bold">{cat.name.substring(0,2).toUpperCase()}</span>}
+                            {cat.isSavings ? <PiggyBank size={18} /> : <CategoryIcon icon={cat.icon} size={18} />}
                         </div>
                         <span className={`font-medium ${cat.isSavings ? 'text-emerald-800' : 'text-neutral-700'}`}>
                             {cat.name}

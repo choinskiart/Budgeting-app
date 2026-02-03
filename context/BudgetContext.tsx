@@ -14,9 +14,10 @@ interface BudgetContextType {
   updateMonthConfig: (config: MonthConfig) => Promise<void>;
   updateCategoryLimit: (categoryId: string, limit: number) => Promise<void>;
   updateAllCategoryLimits: (limits: Record<string, number>) => Promise<void>;
+  updateCategory: (categoryId: string, updates: { name?: string; icon?: string }) => Promise<void>;
   getCreateMonthConfig: (monthId: string) => MonthConfig;
   resetBudget: () => Promise<void>;
-  addCategory: (name: string, limit: number) => Promise<void>;
+  addCategory: (name: string, limit: number, icon?: string) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;
 }
 
@@ -243,6 +244,21 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     await syncToFirestore({ categories: newCategories });
   }, [state.categories, syncToFirestore]);
 
+  const updateCategory = useCallback(async (categoryId: string, updates: { name?: string; icon?: string }) => {
+    const newCategories = state.categories.map((c) =>
+      c.id === categoryId ? { ...c, ...updates } : c
+    );
+
+    // Optimistic update
+    setState(prev => ({
+      ...prev,
+      categories: newCategories,
+    }));
+
+    // Sync to Firestore
+    await syncToFirestore({ categories: newCategories });
+  }, [state.categories, syncToFirestore]);
+
   const resetBudget = useCallback(async () => {
     const defaultState = getDefaultState();
 
@@ -260,12 +276,12 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     localStorage.removeItem('spokoj-app-backup');
   }, [syncToFirestore]);
 
-  const addCategory = useCallback(async (name: string, limit: number) => {
+  const addCategory = useCallback(async (name: string, limit: number, icon: string = 'Tag') => {
     const newCategory: Category = {
       id: crypto.randomUUID(),
       name,
       limit,
-      icon: 'Tag',
+      icon,
       isSystem: false,
     };
 
@@ -317,6 +333,7 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         updateMonthConfig,
         updateCategoryLimit,
         updateAllCategoryLimits,
+        updateCategory,
         getCreateMonthConfig,
         resetBudget,
         addCategory,
