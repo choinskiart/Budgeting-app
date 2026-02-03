@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useBudget } from '../context/BudgetContext';
 import { X, Check, Trash2, ArrowRight, ArrowLeft, AlertCircle } from 'lucide-react';
+import { CategoryIcon } from './ui/CategoryIcon';
 
 const AddTransaction: React.FC = () => {
   const navigate = useNavigate();
@@ -199,6 +200,7 @@ const AddTransaction: React.FC = () => {
                         : 'bg-neutral-50 text-neutral-600 hover:bg-neutral-100'
                     }`}
                 >
+                    <CategoryIcon icon={cat.icon} size={16} />
                     {cat.name}
                 </button>
                 ))}

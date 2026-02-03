@@ -2,15 +2,23 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBudget } from '../context/BudgetContext';
 import { CURRENCY_FORMATTER, getMonthName } from '../constants';
-import { ArrowLeft, Save, AlertCircle, Wallet, PiggyBank, ArrowDownCircle, RotateCcw, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Save, AlertCircle, Wallet, PiggyBank, ArrowDownCircle, RotateCcw, Plus, Trash2, Pencil } from 'lucide-react';
+import { CategoryIcon, IconPicker, AVAILABLE_ICONS } from './ui/CategoryIcon';
 
 const BudgetSetup: React.FC = () => {
   const navigate = useNavigate();
-  const { state, updateMonthConfig, updateAllCategoryLimits, getCreateMonthConfig, resetBudget, addCategory, deleteCategory } = useBudget();
+  const { state, updateMonthConfig, updateAllCategoryLimits, updateCategory, getCreateMonthConfig, resetBudget, addCategory, deleteCategory } = useBudget();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newCategoryLimit, setNewCategoryLimit] = useState('');
+  const [newCategoryIcon, setNewCategoryIcon] = useState('Tag');
+  const [showNewCategoryIconPicker, setShowNewCategoryIconPicker] = useState(false);
+
+  // Edit category state
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState('');
+  const [showIconPicker, setShowIconPicker] = useState<string | null>(null);
   const monthId = state.currentMonthId;
 
   const [income, setIncome] = useState<string>('');
@@ -85,15 +93,39 @@ const BudgetSetup: React.FC = () => {
 
   const handleAddCategory = async () => {
     if (newCategoryName.trim()) {
-      await addCategory(newCategoryName.trim(), getNumericValue(newCategoryLimit));
+      await addCategory(newCategoryName.trim(), getNumericValue(newCategoryLimit), newCategoryIcon);
       setNewCategoryName('');
       setNewCategoryLimit('');
+      setNewCategoryIcon('Tag');
       setShowAddCategory(false);
     }
   };
 
   const handleDeleteCategory = async (id: string) => {
     await deleteCategory(id);
+  };
+
+  const handleStartEditName = (catId: string, currentName: string) => {
+    setEditingCategoryId(catId);
+    setEditingCategoryName(currentName);
+  };
+
+  const handleSaveEditName = async (catId: string) => {
+    if (editingCategoryName.trim()) {
+      await updateCategory(catId, { name: editingCategoryName.trim() });
+    }
+    setEditingCategoryId(null);
+    setEditingCategoryName('');
+  };
+
+  const handleCancelEditName = () => {
+    setEditingCategoryId(null);
+    setEditingCategoryName('');
+  };
+
+  const handleSelectIcon = async (catId: string, icon: string) => {
+    await updateCategory(catId, { icon });
+    setShowIconPicker(null);
   };
 
   const regularCategories = state.categories.filter(c => c.id !== savingsCategoryId);
@@ -156,6 +188,18 @@ const BudgetSetup: React.FC = () => {
                     <h2 className="text-lg font-semibold text-neutral-800 mb-4">Nowa kategoria</h2>
                     <div className="space-y-4">
                         <div>
+                            <label className="text-sm font-medium text-neutral-600 mb-1 block">Ikona</label>
+                            <button
+                                onClick={() => setShowNewCategoryIconPicker(true)}
+                                className="w-full p-3 border border-neutral-200 rounded-xl flex items-center gap-3 hover:bg-neutral-50 transition-colors"
+                            >
+                                <div className="p-2 bg-neutral-100 rounded-lg">
+                                    <CategoryIcon icon={newCategoryIcon} size={20} className="text-neutral-600" />
+                                </div>
+                                <span className="text-neutral-600">Kliknij aby zmienić</span>
+                            </button>
+                        </div>
+                        <div>
                             <label className="text-sm font-medium text-neutral-600 mb-1 block">Nazwa</label>
                             <input
                                 type="text"
@@ -188,6 +232,7 @@ const BudgetSetup: React.FC = () => {
                                 setShowAddCategory(false);
                                 setNewCategoryName('');
                                 setNewCategoryLimit('');
+                                setNewCategoryIcon('Tag');
                             }}
                             className="flex-1 py-2.5 px-4 border border-neutral-200 rounded-xl text-neutral-700 font-medium hover:bg-neutral-50 transition-colors"
                         >
@@ -203,6 +248,24 @@ const BudgetSetup: React.FC = () => {
                     </div>
                 </div>
             </div>
+        )}
+
+        {/* Icon Picker for New Category */}
+        {showNewCategoryIconPicker && (
+            <IconPicker
+                selectedIcon={newCategoryIcon}
+                onSelect={(icon) => setNewCategoryIcon(icon)}
+                onClose={() => setShowNewCategoryIconPicker(false)}
+            />
+        )}
+
+        {/* Icon Picker for Existing Category */}
+        {showIconPicker && (
+            <IconPicker
+                selectedIcon={state.categories.find(c => c.id === showIconPicker)?.icon || 'Tag'}
+                onSelect={(icon) => handleSelectIcon(showIconPicker, icon)}
+                onClose={() => setShowIconPicker(null)}
+            />
         )}
 
         <div className="flex-1 overflow-y-auto">
@@ -242,9 +305,44 @@ const BudgetSetup: React.FC = () => {
 
                         <div className="space-y-3">
                             {regularCategories.map(cat => (
-                                <div key={cat.id} className="flex items-center justify-between p-4 bg-white border border-neutral-100 rounded-xl shadow-sm focus-within:ring-1 focus-within:ring-calm-blue transition-shadow hover:bg-neutral-50 group">
-                                    <span className="text-sm font-medium text-neutral-700">{cat.name}</span>
-                                    <div className="flex items-center gap-2">
+                                <div key={cat.id} className="flex items-center gap-3 p-4 bg-white border border-neutral-100 rounded-xl shadow-sm focus-within:ring-1 focus-within:ring-calm-blue transition-shadow hover:bg-neutral-50 group">
+                                    {/* Icon button */}
+                                    <button
+                                        onClick={() => setShowIconPicker(cat.id)}
+                                        className="p-2 bg-neutral-100 rounded-lg hover:bg-neutral-200 transition-colors flex-shrink-0"
+                                        title="Zmień ikonę"
+                                    >
+                                        <CategoryIcon icon={cat.icon} size={18} className="text-neutral-600" />
+                                    </button>
+
+                                    {/* Name - editable */}
+                                    <div className="flex-1 min-w-0">
+                                        {editingCategoryId === cat.id ? (
+                                            <input
+                                                type="text"
+                                                value={editingCategoryName}
+                                                onChange={(e) => setEditingCategoryName(e.target.value)}
+                                                onBlur={() => handleSaveEditName(cat.id)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') handleSaveEditName(cat.id);
+                                                    if (e.key === 'Escape') handleCancelEditName();
+                                                }}
+                                                className="text-sm font-medium text-neutral-700 bg-white border border-calm-blue rounded px-2 py-1 outline-none w-full"
+                                                autoFocus
+                                            />
+                                        ) : (
+                                            <button
+                                                onClick={() => handleStartEditName(cat.id, cat.name)}
+                                                className="text-sm font-medium text-neutral-700 hover:text-calm-blue transition-colors text-left flex items-center gap-1 group/name"
+                                            >
+                                                <span className="truncate">{cat.name}</span>
+                                                <Pencil size={12} className="opacity-0 group-hover/name:opacity-100 transition-opacity flex-shrink-0" />
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {/* Limit input */}
+                                    <div className="flex items-center gap-2 flex-shrink-0">
                                         <input
                                             type="text"
                                             inputMode="numeric"

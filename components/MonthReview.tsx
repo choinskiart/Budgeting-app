@@ -3,6 +3,7 @@ import { useBudget } from '../context/BudgetContext';
 import { CURRENCY_FORMATTER, getMonthName, PERCENTAGE_FORMATTER } from '../constants';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { Edit2, Search, Filter } from 'lucide-react';
+import { CategoryIcon } from './ui/CategoryIcon';
 import { useNavigate } from 'react-router-dom';
 
 const PIE_COLORS = ['#4F46E5', '#10B981', '#F59E0B', '#F43F5E', '#8B5CF6', '#EC4899', '#6366F1'];
@@ -127,12 +128,13 @@ const Statistics: React.FC = () => {
                     <button
                     key={cat.id}
                     onClick={() => setFilterCategory(cat.id)}
-                    className={`px-4 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-colors border ${
+                    className={`px-4 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-colors border flex items-center gap-1.5 ${
                         filterCategory === cat.id
                             ? 'bg-calm-blue text-white border-calm-blue'
                             : 'bg-white text-neutral-600 border-neutral-200 hover:bg-neutral-50'
                     }`}
                 >
+                    <CategoryIcon icon={cat.icon} size={14} />
                     {cat.name}
                 </button>
             ))}
@@ -156,7 +158,7 @@ const Statistics: React.FC = () => {
                         >
                             <div className="flex items-center gap-3">
                                 <div className={`w-10 h-10 rounded-full flex items-center justify-center bg-neutral-100 text-neutral-500 group-hover:bg-white group-hover:shadow-sm transition-all`}>
-                                    <span className="text-xs font-bold">{category?.name.substring(0,2).toUpperCase()}</span>
+                                    <CategoryIcon icon={category?.icon || 'Tag'} size={18} />
                                 </div>
                                 <div>
                                     <div className="font-medium text-neutral-800">{category?.name}</div>
