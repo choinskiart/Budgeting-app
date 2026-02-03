@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBudget } from '../context/BudgetContext';
 import { CURRENCY_FORMATTER, getMonthName } from '../constants';
-import { ArrowLeft, Save, AlertCircle, Wallet, PiggyBank, ArrowDownCircle, RotateCcw, Plus, Trash2, Pencil } from 'lucide-react';
-import { CategoryIcon, IconPicker, AVAILABLE_ICONS } from './ui/CategoryIcon';
+import { ArrowLeft, AlertCircle, Wallet, PiggyBank, ArrowDownCircle, RotateCcw, Plus, Trash2, Pencil, Check } from 'lucide-react';
+import { CategoryIcon, IconPicker } from './ui/CategoryIcon';
 
 const BudgetSetup: React.FC = () => {
   const navigate = useNavigate();
-  const { state, updateMonthConfig, updateAllCategoryLimits, updateCategory, getCreateMonthConfig, resetBudget, addCategory, deleteCategory } = useBudget();
+  const { state, updateMonthConfig, updateCategoryLimit, updateCategory, getCreateMonthConfig, resetBudget, addCategory, deleteCategory } = useBudget();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -19,70 +19,125 @@ const BudgetSetup: React.FC = () => {
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState('');
   const [showIconPicker, setShowIconPicker] = useState<string | null>(null);
+
+  // Editing limit state - only for currently edited field
+  const [editingLimitId, setEditingLimitId] = useState<string | null>(null);
+  const [editingLimitValue, setEditingLimitValue] = useState('');
+
+  // Editing income state
+  const [editingIncome, setEditingIncome] = useState(false);
+  const [incomeValue, setIncomeValue] = useState('');
+
   const monthId = state.currentMonthId;
-
-  const [income, setIncome] = useState<string>('');
-  const [localLimits, setLocalLimits] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    const config = getCreateMonthConfig(monthId);
-    setIncome(config.totalIncome.toString());
-
-    const limits: Record<string, string> = {};
-    state.categories.forEach(c => {
-      limits[c.id] = c.limit.toString();
-    });
-    setLocalLimits(limits);
-  }, [monthId, getCreateMonthConfig, state.categories]);
-
-  const handleLimitChange = (id: string, val: string) => {
-    // Allow empty string or valid numbers
-    if (val === '' || /^\d+$/.test(val)) {
-      setLocalLimits(prev => ({ ...prev, [id]: val }));
-    }
-  };
+  const config = getCreateMonthConfig(monthId);
 
   const getNumericValue = (val: string): number => {
     return parseInt(val) || 0;
   };
 
-  // Calculations
-  const savingsCategoryId = 'savings';
-  const savingsLimit = getNumericValue(localLimits[savingsCategoryId] || '0');
-
-  // Sum of all categories EXCEPT savings
-  const expensesSum = Object.entries(localLimits)
-    .filter(([id]) => id !== savingsCategoryId)
-    .reduce((acc, [_, limit]) => acc + getNumericValue(limit), 0);
-
-  // Total allocated including savings
-  const totalAllocated = expensesSum + savingsLimit;
-
-  // What is left from income to be assigned
-  const incomeNum = getNumericValue(income);
-  const unassigned = incomeNum - totalAllocated;
-
-  // Potential savings (Income - Expenses)
-  const potentialSavings = Math.max(0, incomeNum - expensesSum);
-
-  const handleSetSavingsToPotential = () => {
-    setLocalLimits(prev => ({ ...prev, [savingsCategoryId]: potentialSavings.toString() }));
+  // Get limit for a category - use editing value if currently editing, otherwise from state
+  const getLimitValue = (catId: string): string => {
+    if (editingLimitId === catId) {
+      return editingLimitValue;
+    }
+    const cat = state.categories.find(c => c.id === catId);
+    return cat ? cat.limit.toString() : '0';
   };
 
-  const handleSave = async () => {
-    // Convert all string limits to numbers and update in a single call
-    const limits: Record<string, number> = {};
-    Object.entries(localLimits).forEach(([id, limit]) => {
-      limits[id] = getNumericValue(limit);
-    });
-    await updateAllCategoryLimits(limits);
+  // Get income - use editing value if currently editing, otherwise from config
+  const getIncomeValue = (): string => {
+    if (editingIncome) {
+      return incomeValue;
+    }
+    return config.totalIncome.toString();
+  };
 
-    await updateMonthConfig({
-      id: monthId,
-      totalIncome: incomeNum,
-      savingsGoals: []
-    });
-    navigate('/');
+  // Calculations using actual state values
+  const savingsCategoryId = 'savings';
+
+  const calculateExpensesSum = () => {
+    return state.categories
+      .filter(c => c.id !== savingsCategoryId)
+      .reduce((acc, c) => {
+        if (editingLimitId === c.id) {
+          return acc + getNumericValue(editingLimitValue);
+        }
+        return acc + c.limit;
+      }, 0);
+  };
+
+  const calculateSavingsLimit = () => {
+    if (editingLimitId === savingsCategoryId) {
+      return getNumericValue(editingLimitValue);
+    }
+    const savingsCat = state.categories.find(c => c.id === savingsCategoryId);
+    return savingsCat?.limit || 0;
+  };
+
+  const expensesSum = calculateExpensesSum();
+  const savingsLimit = calculateSavingsLimit();
+  const totalAllocated = expensesSum + savingsLimit;
+  const incomeNum = editingIncome ? getNumericValue(incomeValue) : config.totalIncome;
+  const unassigned = incomeNum - totalAllocated;
+  const potentialSavings = Math.max(0, incomeNum - expensesSum);
+
+  // Handle limit editing
+  const handleLimitFocus = (catId: string) => {
+    const cat = state.categories.find(c => c.id === catId);
+    setEditingLimitId(catId);
+    setEditingLimitValue(cat ? cat.limit.toString() : '0');
+  };
+
+  const handleLimitChange = (val: string) => {
+    if (val === '' || /^\d+$/.test(val)) {
+      setEditingLimitValue(val);
+    }
+  };
+
+  const handleLimitBlur = async (catId: string) => {
+    const newLimit = getNumericValue(editingLimitValue);
+    const cat = state.categories.find(c => c.id === catId);
+
+    // Only save if value changed
+    if (cat && cat.limit !== newLimit) {
+      await updateCategoryLimit(catId, newLimit);
+    }
+
+    setEditingLimitId(null);
+    setEditingLimitValue('');
+  };
+
+  // Handle income editing
+  const handleIncomeFocus = () => {
+    setEditingIncome(true);
+    setIncomeValue(config.totalIncome.toString());
+  };
+
+  const handleIncomeChange = (val: string) => {
+    if (val === '' || /^\d+$/.test(val)) {
+      setIncomeValue(val);
+    }
+  };
+
+  const handleIncomeBlur = async () => {
+    const newIncome = getNumericValue(incomeValue);
+
+    // Only save if value changed
+    if (config.totalIncome !== newIncome) {
+      await updateMonthConfig({
+        id: monthId,
+        totalIncome: newIncome,
+        savingsGoals: config.savingsGoals || []
+      });
+    }
+
+    setEditingIncome(false);
+    setIncomeValue('');
+  };
+
+  // Set savings to potential savings
+  const handleSetSavingsToPotential = async () => {
+    await updateCategoryLimit(savingsCategoryId, potentialSavings);
   };
 
   const handleReset = async () => {
@@ -283,12 +338,10 @@ const BudgetSetup: React.FC = () => {
                             <input
                                 type="text"
                                 inputMode="numeric"
-                                value={income}
-                                onChange={(e) => {
-                                    if (e.target.value === '' || /^\d+$/.test(e.target.value)) {
-                                        setIncome(e.target.value);
-                                    }
-                                }}
+                                value={getIncomeValue()}
+                                onFocus={handleIncomeFocus}
+                                onChange={(e) => handleIncomeChange(e.target.value)}
+                                onBlur={handleIncomeBlur}
                                 className="w-full bg-transparent text-3xl font-bold text-neutral-800 outline-none placeholder-neutral-300"
                                 placeholder="0"
                             />
@@ -346,8 +399,10 @@ const BudgetSetup: React.FC = () => {
                                         <input
                                             type="text"
                                             inputMode="numeric"
-                                            value={localLimits[cat.id] || ''}
-                                            onChange={(e) => handleLimitChange(cat.id, e.target.value)}
+                                            value={getLimitValue(cat.id)}
+                                            onFocus={() => handleLimitFocus(cat.id)}
+                                            onChange={(e) => handleLimitChange(e.target.value)}
+                                            onBlur={() => handleLimitBlur(cat.id)}
                                             placeholder="0"
                                             className="w-24 p-2 text-right bg-transparent border-b border-transparent focus:border-calm-blue rounded-none font-medium text-neutral-800 outline-none transition-colors"
                                         />
@@ -408,8 +463,10 @@ const BudgetSetup: React.FC = () => {
                                     <input
                                         type="text"
                                         inputMode="numeric"
-                                        value={localLimits[savingsCategoryId] || ''}
-                                        onChange={(e) => handleLimitChange(savingsCategoryId, e.target.value)}
+                                        value={getLimitValue(savingsCategoryId)}
+                                        onFocus={() => handleLimitFocus(savingsCategoryId)}
+                                        onChange={(e) => handleLimitChange(e.target.value)}
+                                        onBlur={() => handleLimitBlur(savingsCategoryId)}
                                         placeholder="0"
                                         className="w-28 p-2 text-right bg-emerald-50 rounded-md font-bold text-emerald-800 outline-none focus:bg-white focus:ring-2 focus:ring-emerald-200 transition-colors"
                                     />
@@ -426,7 +483,7 @@ const BudgetSetup: React.FC = () => {
             </div>
         </div>
 
-        {/* Sticky Bottom Balancer */}
+        {/* Sticky Bottom Balancer - just shows status now */}
         <div className="sticky bottom-0 left-0 right-0 bg-white border-t border-neutral-200 p-4 md:p-6 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-30 w-full">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 max-w-4xl mx-auto">
                 {/* Balance Indicator */}
@@ -446,12 +503,11 @@ const BudgetSetup: React.FC = () => {
                 </div>
 
                 <button
-                    onClick={handleSave}
-                    disabled={unassigned < 0}
-                    className="w-full md:w-auto md:px-12 py-3.5 md:py-4 bg-neutral-900 text-white rounded-xl font-semibold hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex justify-center items-center gap-2 shadow-lg"
+                    onClick={() => navigate('/')}
+                    className="w-full md:w-auto md:px-12 py-3.5 md:py-4 bg-neutral-900 text-white rounded-xl font-semibold hover:bg-neutral-800 transition-all flex justify-center items-center gap-2 shadow-lg"
                 >
-                    <Save size={18} />
-                    Zatwierdź Plan
+                    <Check size={18} />
+                    Gotowe
                 </button>
             </div>
         </div>
