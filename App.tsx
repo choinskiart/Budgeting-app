@@ -1,13 +1,34 @@
 import React from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { BudgetProvider } from './context/BudgetContext';
 import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
 import AddTransaction from './components/AddTransaction';
-import Statistics from './components/MonthReview'; // Reused file, new logic
+import Statistics from './components/MonthReview';
 import BudgetSetup from './components/BudgetSetup';
+import LoginScreen from './components/LoginScreen';
+import { Loader2 } from 'lucide-react';
 
-const App: React.FC = () => {
+// Protected routes wrapper
+const ProtectedApp: React.FC = () => {
+  const { user, isLoading, isAllowed } = useAuth();
+
+  // Show loading spinner while checking auth state
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-neutral-50">
+        <Loader2 className="w-8 h-8 animate-spin text-calm-blue" />
+      </div>
+    );
+  }
+
+  // Show login screen if not authenticated or not allowed
+  if (!user || !isAllowed) {
+    return <LoginScreen />;
+  }
+
+  // User is authenticated and allowed - show the app
   return (
     <BudgetProvider>
       <HashRouter>
@@ -23,6 +44,14 @@ const App: React.FC = () => {
         </Routes>
       </HashRouter>
     </BudgetProvider>
+  );
+};
+
+const App: React.FC = () => {
+  return (
+    <AuthProvider>
+      <ProtectedApp />
+    </AuthProvider>
   );
 };
 

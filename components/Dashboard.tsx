@@ -1,13 +1,15 @@
 import React, { useMemo } from 'react';
 import { useBudget } from '../context/BudgetContext';
+import { useAuth } from '../context/AuthContext';
 import { CURRENCY_FORMATTER, getMonthName, PERCENTAGE_FORMATTER } from '../constants';
 import { ProgressBar } from './ui/ProgressBar';
 import { Link } from 'react-router-dom';
-import { Settings, PiggyBank, Wifi, WifiOff, Loader2 } from 'lucide-react';
+import { Settings, PiggyBank, Wifi, WifiOff, Loader2, LogOut } from 'lucide-react';
 import { CategoryIcon } from './ui/CategoryIcon';
 
 const Dashboard: React.FC = () => {
   const { state, isLoading, isOnline } = useBudget();
+  const { user, signOut } = useAuth();
   const currentMonthId = state.currentMonthId;
 
   // Filter transactions for current month
@@ -71,13 +73,30 @@ const Dashboard: React.FC = () => {
           </div>
           <p className="text-sm md:text-base text-neutral-500 capitalize mt-1">{getMonthName(currentMonthId)}</p>
         </div>
-        <Link 
-            to="/setup" 
-            className="p-2 md:px-4 md:py-2 md:bg-white md:border md:border-neutral-200 md:rounded-lg md:shadow-sm text-neutral-400 md:text-neutral-600 hover:text-neutral-800 transition-all flex items-center gap-2"
-        >
-          <Settings size={24} strokeWidth={1.5} className="md:w-5 md:h-5" />
-          <span className="hidden md:inline text-sm font-medium">Ustawienia Budżetu</span>
-        </Link>
+        <div className="flex items-center gap-2">
+          {/* User avatar */}
+          {user?.photoURL && (
+            <img
+              src={user.photoURL}
+              alt=""
+              className="w-8 h-8 rounded-full border border-neutral-200 hidden md:block"
+            />
+          )}
+          <Link
+              to="/setup"
+              className="p-2 md:px-4 md:py-2 md:bg-white md:border md:border-neutral-200 md:rounded-lg md:shadow-sm text-neutral-400 md:text-neutral-600 hover:text-neutral-800 transition-all flex items-center gap-2"
+          >
+            <Settings size={24} strokeWidth={1.5} className="md:w-5 md:h-5" />
+            <span className="hidden md:inline text-sm font-medium">Ustawienia</span>
+          </Link>
+          <button
+            onClick={signOut}
+            className="p-2 text-neutral-400 hover:text-rose-500 transition-colors"
+            title="Wyloguj"
+          >
+            <LogOut size={20} />
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
