@@ -39,6 +39,7 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const [state, setState] = useState<AppState>(getDefaultState);
   const [isLoading, setIsLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
 
   // Realtime listener for Firestore
   useEffect(() => {
@@ -71,16 +72,51 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
             categories: categories,
             transactions: Array.isArray(data.transactions) ? data.transactions : [],
           });
-        } else {
-          // First time - initialize with defaults
-          const defaultState = getDefaultState();
-          setState(defaultState);
-          // Save initial state to Firestore
-          setDoc(docRef, {
-            configs: defaultState.configs,
-            categories: defaultState.categories,
-            transactions: defaultState.transactions,
-          });
+          setHasLoadedOnce(true);
+        } else if (!hasLoadedOnce) {
+          // First time AND document doesn't exist - try to restore from localStorage first
+          const stored = localStorage.getItem('spokoj-app-backup');
+          if (stored) {
+            try {
+              const parsed = JSON.parse(stored);
+              // Restore from localStorage backup
+              const restoredState = {
+                currentMonthId: getCurrentMonthId(),
+                configs: parsed.configs || {},
+                categories: parsed.categories || DEFAULT_CATEGORIES,
+                transactions: parsed.transactions || [],
+              };
+              setState(restoredState);
+              // Save restored data to Firestore
+              setDoc(docRef, {
+                configs: restoredState.configs,
+                categories: restoredState.categories,
+                transactions: restoredState.transactions,
+              });
+              setHasLoadedOnce(true);
+            } catch (e) {
+              console.error('Error restoring from localStorage:', e);
+              // Only if no backup exists, use defaults
+              const defaultState = getDefaultState();
+              setState(defaultState);
+              setDoc(docRef, {
+                configs: defaultState.configs,
+                categories: defaultState.categories,
+                transactions: defaultState.transactions,
+              });
+              setHasLoadedOnce(true);
+            }
+          } else {
+            // No backup, truly first time - use defaults
+            const defaultState = getDefaultState();
+            setState(defaultState);
+            setDoc(docRef, {
+              configs: defaultState.configs,
+              categories: defaultState.categories,
+              transactions: defaultState.transactions,
+            });
+            setHasLoadedOnce(true);
+          }
         }
       },
       (error) => {
@@ -88,26 +124,28 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         setIsOnline(false);
         setIsLoading(false);
 
-        // Fallback to localStorage if offline
-        try {
-          const stored = localStorage.getItem('spokoj-app-backup');
-          if (stored) {
-            const parsed = JSON.parse(stored);
-            setState({
-              currentMonthId: getCurrentMonthId(),
-              configs: parsed.configs || {},
-              categories: parsed.categories || DEFAULT_CATEGORIES,
-              transactions: parsed.transactions || [],
-            });
+        // Fallback to localStorage if offline - but don't overwrite if we already have data
+        if (!hasLoadedOnce) {
+          try {
+            const stored = localStorage.getItem('spokoj-app-backup');
+            if (stored) {
+              const parsed = JSON.parse(stored);
+              setState({
+                currentMonthId: getCurrentMonthId(),
+                configs: parsed.configs || {},
+                categories: parsed.categories || DEFAULT_CATEGORIES,
+                transactions: parsed.transactions || [],
+              });
+            }
+          } catch (e) {
+            console.error('LocalStorage fallback error:', e);
           }
-        } catch (e) {
-          console.error('LocalStorage fallback error:', e);
         }
       }
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [hasLoadedOnce]);
 
   // Backup to localStorage
   useEffect(() => {
