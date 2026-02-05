@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
 import { doc, onSnapshot, setDoc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { AppState, Transaction, Category, MonthConfig, DEFAULT_CATEGORIES, INITIAL_SAVINGS_GOAL } from '../types';
@@ -39,7 +39,7 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const [state, setState] = useState<AppState>(getDefaultState);
   const [isLoading, setIsLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
-  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const hasLoadedOnce = useRef(false);
 
   // Realtime listener for Firestore
   useEffect(() => {
@@ -72,8 +72,8 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
             categories: categories,
             transactions: Array.isArray(data.transactions) ? data.transactions : [],
           });
-          setHasLoadedOnce(true);
-        } else if (!hasLoadedOnce) {
+          hasLoadedOnce.current = true;
+        } else if (!hasLoadedOnce.current) {
           // First time AND document doesn't exist - try to restore from localStorage first
           const stored = localStorage.getItem('spokoj-app-backup');
           if (stored) {
@@ -93,7 +93,7 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
                 categories: restoredState.categories,
                 transactions: restoredState.transactions,
               });
-              setHasLoadedOnce(true);
+              hasLoadedOnce.current = true;
             } catch (e) {
               console.error('Error restoring from localStorage:', e);
               // Only if no backup exists, use defaults
@@ -104,7 +104,7 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
                 categories: defaultState.categories,
                 transactions: defaultState.transactions,
               });
-              setHasLoadedOnce(true);
+              hasLoadedOnce.current = true;
             }
           } else {
             // No backup, truly first time - use defaults
@@ -115,7 +115,7 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
               categories: defaultState.categories,
               transactions: defaultState.transactions,
             });
-            setHasLoadedOnce(true);
+            hasLoadedOnce.current = true;
           }
         }
       },
@@ -125,7 +125,7 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         setIsLoading(false);
 
         // Fallback to localStorage if offline - but don't overwrite if we already have data
-        if (!hasLoadedOnce) {
+        if (!hasLoadedOnce.current) {
           try {
             const stored = localStorage.getItem('spokoj-app-backup');
             if (stored) {
@@ -145,7 +145,7 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     );
 
     return () => unsubscribe();
-  }, [hasLoadedOnce]);
+  }, []); // Empty dependency array - only run once
 
   // Backup to localStorage
   useEffect(() => {
