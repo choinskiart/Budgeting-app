@@ -31,11 +31,31 @@ export interface MonthConfig {
   // Logic: Available for Expenses = TotalIncome - Sum(SavingsGoals.targetAmount)
 }
 
+// Mapping of merchant names/patterns to categories (for auto-categorization)
+export interface MerchantMapping {
+  pattern: string; // Part of merchant name to match (lowercase)
+  categoryId: string;
+  merchantName: string; // Original full name for display
+}
+
 export interface AppState {
   currentMonthId: string; // "YYYY-MM"
   configs: Record<string, MonthConfig>; // Keyed by month ID
   categories: Category[];
   transactions: Transaction[];
+  merchantMappings?: MerchantMapping[]; // Auto-categorization rules
+}
+
+// Parsed transaction from PDF (before import)
+export interface ParsedTransaction {
+  id: string; // Temporary ID for UI
+  date: string;
+  description: string;
+  merchant: string;
+  amount: number;
+  suggestedCategoryId: string | null;
+  isAutoMatched: boolean;
+  selected: boolean; // Whether to import this transaction
 }
 
 export const DEFAULT_CATEGORIES: Category[] = [
