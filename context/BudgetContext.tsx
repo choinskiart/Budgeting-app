@@ -1,7 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
 import { doc, onSnapshot, setDoc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { AppState, Transaction, Category, MonthConfig, DEFAULT_CATEGORIES, INITIAL_SAVINGS_GOAL } from '../types';
+import { AppState, Transaction, Category, MonthConfig, DEFAULT_CATEGORIES, INITIAL_SAVINGS_GOAL, MerchantMapping } from '../types';
 import { getCurrentMonthId } from '../constants';
 
 interface BudgetContextType {
@@ -9,6 +9,7 @@ interface BudgetContextType {
   isLoading: boolean;
   isOnline: boolean;
   addTransaction: (transaction: Omit<Transaction, 'id' | 'timestamp'>) => Promise<void>;
+  addMultipleTransactions: (transactions: Omit<Transaction, 'id' | 'timestamp'>[]) => Promise<void>;
   editTransaction: (id: string, updated: Partial<Omit<Transaction, 'id' | 'timestamp'>>) => Promise<void>;
   deleteTransaction: (id: string) => Promise<void>;
   updateMonthConfig: (config: MonthConfig) => Promise<void>;
@@ -19,6 +20,8 @@ interface BudgetContextType {
   resetBudget: () => Promise<void>;
   addCategory: (name: string, limit: number, icon?: string) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;
+  saveMerchantMapping: (mapping: MerchantMapping) => Promise<void>;
+  findCategoryForMerchant: (merchantName: string) => string | null;
 }
 
 const BudgetContext = createContext<BudgetContextType | undefined>(undefined);
@@ -33,12 +36,14 @@ const getDefaultState = (): AppState => ({
   configs: {},
   categories: DEFAULT_CATEGORIES,
   transactions: [],
+  merchantMappings: [],
 });
 
 export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [state, setState] = useState<AppState>(getDefaultState);
   const [isLoading, setIsLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
+  const hasLoadedOnce = useRef(false);
 
   // Realtime listener for Firestore
   useEffect(() => {
@@ -70,17 +75,55 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
             configs: data.configs || {},
             categories: categories,
             transactions: Array.isArray(data.transactions) ? data.transactions : [],
+            merchantMappings: Array.isArray(data.merchantMappings) ? data.merchantMappings : [],
           });
-        } else {
-          // First time - initialize with defaults
-          const defaultState = getDefaultState();
-          setState(defaultState);
-          // Save initial state to Firestore
-          setDoc(docRef, {
-            configs: defaultState.configs,
-            categories: defaultState.categories,
-            transactions: defaultState.transactions,
-          });
+          hasLoadedOnce.current = true;
+        } else if (!hasLoadedOnce.current) {
+          // First time AND document doesn't exist - try to restore from localStorage first
+          const stored = localStorage.getItem('spokoj-app-backup');
+          if (stored) {
+            try {
+              const parsed = JSON.parse(stored);
+              // Restore from localStorage backup
+              const restoredState = {
+                currentMonthId: getCurrentMonthId(),
+                configs: parsed.configs || {},
+                categories: parsed.categories || DEFAULT_CATEGORIES,
+                transactions: parsed.transactions || [],
+                merchantMappings: parsed.merchantMappings || [],
+              };
+              setState(restoredState);
+              // Save restored data to Firestore
+              setDoc(docRef, {
+                configs: restoredState.configs,
+                categories: restoredState.categories,
+                transactions: restoredState.transactions,
+                merchantMappings: restoredState.merchantMappings,
+              });
+              hasLoadedOnce.current = true;
+            } catch (e) {
+              console.error('Error restoring from localStorage:', e);
+              // Only if no backup exists, use defaults
+              const defaultState = getDefaultState();
+              setState(defaultState);
+              setDoc(docRef, {
+                configs: defaultState.configs,
+                categories: defaultState.categories,
+                transactions: defaultState.transactions,
+              });
+              hasLoadedOnce.current = true;
+            }
+          } else {
+            // No backup, truly first time - use defaults
+            const defaultState = getDefaultState();
+            setState(defaultState);
+            setDoc(docRef, {
+              configs: defaultState.configs,
+              categories: defaultState.categories,
+              transactions: defaultState.transactions,
+            });
+            hasLoadedOnce.current = true;
+          }
         }
       },
       (error) => {
@@ -88,26 +131,28 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         setIsOnline(false);
         setIsLoading(false);
 
-        // Fallback to localStorage if offline
-        try {
-          const stored = localStorage.getItem('spokoj-app-backup');
-          if (stored) {
-            const parsed = JSON.parse(stored);
-            setState({
-              currentMonthId: getCurrentMonthId(),
-              configs: parsed.configs || {},
-              categories: parsed.categories || DEFAULT_CATEGORIES,
-              transactions: parsed.transactions || [],
-            });
+        // Fallback to localStorage if offline - but don't overwrite if we already have data
+        if (!hasLoadedOnce.current) {
+          try {
+            const stored = localStorage.getItem('spokoj-app-backup');
+            if (stored) {
+              const parsed = JSON.parse(stored);
+              setState({
+                currentMonthId: getCurrentMonthId(),
+                configs: parsed.configs || {},
+                categories: parsed.categories || DEFAULT_CATEGORIES,
+                transactions: parsed.transactions || [],
+              });
+            }
+          } catch (e) {
+            console.error('LocalStorage fallback error:', e);
           }
-        } catch (e) {
-          console.error('LocalStorage fallback error:', e);
         }
       }
     );
 
     return () => unsubscribe();
-  }, []);
+  }, []); // Empty dependency array - only run once
 
   // Backup to localStorage
   useEffect(() => {
@@ -116,6 +161,7 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         configs: state.configs,
         categories: state.categories,
         transactions: state.transactions,
+        merchantMappings: state.merchantMappings,
       }));
     }
   }, [state, isLoading]);
@@ -321,6 +367,63 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     await syncToFirestore({ categories: newCategories });
   }, [state.categories, syncToFirestore]);
 
+  const addMultipleTransactions = useCallback(async (inputs: Omit<Transaction, 'id' | 'timestamp'>[]) => {
+    const newTxs: Transaction[] = inputs.map(input => ({
+      ...input,
+      id: crypto.randomUUID(),
+      timestamp: Date.now(),
+    }));
+
+    const newTransactions = [...newTxs, ...state.transactions];
+
+    // Optimistic update
+    setState(prev => ({
+      ...prev,
+      transactions: newTransactions,
+    }));
+
+    // Sync to Firestore
+    await syncToFirestore({ transactions: newTransactions });
+  }, [state.transactions, syncToFirestore]);
+
+  const saveMerchantMapping = useCallback(async (mapping: MerchantMapping) => {
+    const existingMappings = state.merchantMappings || [];
+
+    // Check if pattern already exists, update if so
+    const existingIndex = existingMappings.findIndex(
+      m => m.pattern.toLowerCase() === mapping.pattern.toLowerCase()
+    );
+
+    let newMappings: MerchantMapping[];
+    if (existingIndex >= 0) {
+      newMappings = [...existingMappings];
+      newMappings[existingIndex] = mapping;
+    } else {
+      newMappings = [...existingMappings, mapping];
+    }
+
+    // Optimistic update
+    setState(prev => ({
+      ...prev,
+      merchantMappings: newMappings,
+    }));
+
+    // Sync to Firestore
+    await syncToFirestore({ merchantMappings: newMappings });
+  }, [state.merchantMappings, syncToFirestore]);
+
+  const findCategoryForMerchant = useCallback((merchantName: string): string | null => {
+    const mappings = state.merchantMappings || [];
+    const lowerMerchant = merchantName.toLowerCase();
+
+    for (const mapping of mappings) {
+      if (lowerMerchant.includes(mapping.pattern.toLowerCase())) {
+        return mapping.categoryId;
+      }
+    }
+    return null;
+  }, [state.merchantMappings]);
+
   return (
     <BudgetContext.Provider
       value={{
@@ -328,6 +431,7 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         isLoading,
         isOnline,
         addTransaction,
+        addMultipleTransactions,
         editTransaction,
         deleteTransaction,
         updateMonthConfig,
@@ -338,6 +442,8 @@ export const BudgetProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         resetBudget,
         addCategory,
         deleteCategory,
+        saveMerchantMapping,
+        findCategoryForMerchant,
       }}
     >
       {children}

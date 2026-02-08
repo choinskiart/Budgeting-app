@@ -7,6 +7,7 @@ import Dashboard from './components/Dashboard';
 import AddTransaction from './components/AddTransaction';
 import Statistics from './components/MonthReview';
 import BudgetSetup from './components/BudgetSetup';
+import ImportTransactions from './components/ImportTransactions';
 import LoginScreen from './components/LoginScreen';
 import { Loader2 } from 'lucide-react';
 
@@ -40,6 +41,7 @@ const ProtectedApp: React.FC = () => {
           <Route path="/add" element={<AddTransaction />} />
           <Route path="/edit/:id" element={<AddTransaction />} />
           <Route path="/setup" element={<BudgetSetup />} />
+          <Route path="/import" element={<ImportTransactions />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </HashRouter>

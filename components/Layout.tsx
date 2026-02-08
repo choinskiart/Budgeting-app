@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { LayoutDashboard, PlusCircle, PieChart, Wallet, Menu } from 'lucide-react';
+import { LayoutDashboard, PlusCircle, PieChart, Wallet, FileUp } from 'lucide-react';
 
 const Layout: React.FC = () => {
   const location = useLocation();
@@ -39,13 +39,20 @@ const Layout: React.FC = () => {
             <SidebarLink to="/" icon={LayoutDashboard} label="Pulpit" />
             <SidebarLink to="/statistics" icon={PieChart} label="Statystyki" />
             
-            <div className="pt-4 mt-4 border-t border-neutral-100">
+            <div className="pt-4 mt-4 border-t border-neutral-100 space-y-2">
                 <NavLink
                     to="/add"
                     className="flex items-center gap-3 px-4 py-3 rounded-xl bg-calm-blue text-white hover:bg-indigo-700 transition-colors shadow-sm"
                 >
                     <PlusCircle size={20} />
                     <span className="font-medium">Dodaj Wydatek</span>
+                </NavLink>
+                <NavLink
+                    to="/import"
+                    className="flex items-center gap-3 px-4 py-3 rounded-xl bg-neutral-100 text-neutral-700 hover:bg-neutral-200 transition-colors"
+                >
+                    <FileUp size={20} />
+                    <span className="font-medium">Import z PDF</span>
                 </NavLink>
             </div>
         </nav>
