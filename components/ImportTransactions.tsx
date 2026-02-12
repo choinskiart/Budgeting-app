@@ -7,8 +7,8 @@ import { CategoryIcon } from './ui/CategoryIcon';
 import { CURRENCY_FORMATTER } from '../constants';
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Set worker path for PDF.js
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+// Set worker path for PDF.js - use unpkg as fallback
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
 const ImportTransactions: React.FC = () => {
   const navigate = useNavigate();
@@ -118,7 +118,21 @@ const ImportTransactions: React.FC = () => {
 
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+      // Try loading PDF with worker disabled as fallback
+      let pdf;
+      try {
+        pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      } catch (workerError) {
+        console.warn('Worker failed, trying without worker:', workerError);
+        // Retry without worker
+        pdf = await pdfjsLib.getDocument({
+          data: arrayBuffer,
+          useWorkerFetch: false,
+          isEvalSupported: false,
+          useSystemFonts: true,
+        }).promise;
+      }
 
       let fullText = '';
 
@@ -131,10 +145,13 @@ const ImportTransactions: React.FC = () => {
         fullText += pageText + '\n';
       }
 
+      console.log('Extracted PDF text:', fullText.substring(0, 1000)); // Debug log
+
       const transactions = parseTransactionsFromText(fullText);
 
       if (transactions.length === 0) {
-        setError('Nie znaleziono transakcji w tym pliku PDF. Sprawdź czy to jest wyciąg bankowy.');
+        setError('Nie znaleziono transakcji w tym pliku PDF. Spróbuj wyeksportować wyciąg w innym formacie lub skontaktuj się ze mną.');
+        console.log('Full extracted text:', fullText); // Debug log
       } else {
         setParsedTransactions(transactions);
 
@@ -144,9 +161,15 @@ const ImportTransactions: React.FC = () => {
           .map(t => t.id);
         setNeedsManualReview(needsReview);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('PDF parsing error:', err);
-      setError('Błąd podczas przetwarzania pliku PDF. Upewnij się, że plik nie jest zabezpieczony hasłem.');
+      if (err.message?.includes('password')) {
+        setError('Plik PDF jest zabezpieczony hasłem. Usuń hasło przed importem.');
+      } else if (err.message?.includes('Invalid')) {
+        setError('Nieprawidłowy format pliku PDF. Spróbuj pobrać wyciąg ponownie.');
+      } else {
+        setError(`Błąd podczas przetwarzania: ${err.message || 'nieznany błąd'}. Sprawdź konsolę przeglądarki (F12) po więcej szczegółów.`);
+      }
     } finally {
       setIsProcessing(false);
     }
