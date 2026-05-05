@@ -215,6 +215,20 @@ def capture_webcam(out_dir: Path) -> str | None:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = out_dir / f"webcam_{ts}.jpg"
 
+    # Try opencv first — works on all platforms, no external tools needed
+    try:
+        import cv2
+        cap = cv2.VideoCapture(0)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            cap.release()
+            if ret:
+                cv2.imwrite(str(path), frame)
+                if path.exists() and path.stat().st_size > 0:
+                    return str(path)
+    except ImportError:
+        pass
+
     if sys.platform == "darwin":
         cmds = [
             ["imagesnap", "-q", str(path)],
