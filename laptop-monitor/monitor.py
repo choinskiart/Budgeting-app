@@ -64,6 +64,7 @@ CONFIG_FILE = DATA_DIR / "config.json"
 DB_FILE = DATA_DIR / "monitor.db"
 SCREENSHOTS_DIR = DATA_DIR / "screenshots"
 ARMED_FLAG = DATA_DIR / ".armed"
+WEBCAM_FLAG = DATA_DIR / ".webcam"
 LOG_FILE = DATA_DIR / "monitor.log"
 
 DEFAULT_CONFIG = {
@@ -504,12 +505,15 @@ class LaptopMonitor:
 
     def arm(self, with_webcam: bool = False):
         ARMED_FLAG.touch()
+        if with_webcam:
+            WEBCAM_FLAG.touch()
+        else:
+            WEBCAM_FLAG.unlink(missing_ok=True)
         logging.info("Monitor ARMED — watching for activity.")
         print("Monitor armed. Any laptop activity will now be recorded.")
-        if with_webcam:
-            self.cfg["capture_webcam"] = True
 
     def disarm(self):
+        WEBCAM_FLAG.unlink(missing_ok=True)
         if ARMED_FLAG.exists():
             ARMED_FLAG.unlink()
         with self._lock:
@@ -591,7 +595,7 @@ class LaptopMonitor:
         logging.warning(f"!!! SUSPICIOUS ACTIVITY — session #{self._session} started at {start}")
 
         webcam_photo: str | None = None
-        if self.cfg.get("capture_webcam"):
+        if WEBCAM_FLAG.exists() or self.cfg.get("capture_webcam"):
             webcam_photo = capture_webcam(SCREENSHOTS_DIR)
             if webcam_photo:
                 self.db.log_event(self._session, "webcam_photo", webcam_photo)
