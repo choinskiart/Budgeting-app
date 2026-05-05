@@ -3,6 +3,7 @@
   "process_check_interval": 10,
   "idle_threshold": 120,
   "capture_webcam": false,
+
   "email": {
     "enabled": false,
     "smtp_server": "smtp.gmail.com",
@@ -10,5 +11,19 @@
     "username": "twoj@gmail.com",
     "password": "haslo-aplikacji",
     "to": "twoj@gmail.com"
+  },
+
+  "telegram": {
+    "enabled": false,
+    "bot_token": "",
+    "chat_id": "",
+    "send_screenshots": true,
+    "screenshot_every_n": 3
+  },
+
+  "ntfy": {
+    "enabled": false,
+    "topic": "",
+    "server": "https://ntfy.sh"
   }
 }

@@ -5,11 +5,12 @@ Laptop Activity Monitor — Daemon
 Detects and logs suspicious activity on your laptop while you're away.
 
 Usage:
-    python monitor.py --run          Start the background daemon
-    python monitor.py --arm          Arm: start watching for intruders
-    python monitor.py --disarm       Disarm: stop watching (you're back)
-    python monitor.py --status       Show current state and stats
-    python monitor.py --webcam       Arm + capture webcam photo on each session
+    python monitor.py --run               Start the background daemon
+    python monitor.py --arm               Arm: start watching for intruders
+    python monitor.py --disarm            Disarm: stop watching (you're back)
+    python monitor.py --status            Show current state and stats
+    python monitor.py --webcam            Arm + capture webcam photo on each session
+    python monitor.py --setup-telegram    Interactive helper to configure Telegram bot
 """
 
 import os
@@ -48,6 +49,12 @@ try:
 except ImportError:
     sys.exit("Missing dependency: pip install psutil")
 
+try:
+    import requests as _requests
+    _REQUESTS = True
+except ImportError:
+    _REQUESTS = False
+
 # ── paths ────────────────────────────────────────────────────────────────────
 
 DATA_DIR = Path.home() / ".laptop-monitor"
@@ -69,6 +76,18 @@ DEFAULT_CONFIG = {
         "username": "",
         "password": "",              # use App Password for Gmail
         "to": ""
+    },
+    "telegram": {
+        "enabled": False,
+        "bot_token": "",             # from @BotFather
+        "chat_id": "",               # run --setup-telegram to find yours
+        "send_screenshots": True,    # attach screenshot to each alert
+        "screenshot_every_n": 3      # also forward every Nth periodic screenshot
+    },
+    "ntfy": {
+        "enabled": False,
+        "topic": "",                 # e.g. "moj-laptop-xyz123" — keep it unguessable
+        "server": "https://ntfy.sh"  # or your self-hosted instance
     }
 }
 
@@ -248,6 +267,95 @@ def send_email(cfg: dict, session_id: int, start_time: str):
     except Exception as e:
         logging.warning(f"Email failed: {e}")
 
+# ── Telegram notifier ────────────────────────────────────────────────────────
+
+def notify_telegram(token: str, chat_id: str, text: str, photo_path: str | None = None):
+    if not _REQUESTS:
+        logging.warning("requests not installed — Telegram skipped (pip install requests)")
+        return
+    base = f"https://api.telegram.org/bot{token}"
+    try:
+        if photo_path and Path(photo_path).exists():
+            with open(photo_path, "rb") as f:
+                _requests.post(
+                    f"{base}/sendPhoto",
+                    data={"chat_id": chat_id, "caption": text},
+                    files={"photo": f},
+                    timeout=20,
+                )
+        else:
+            _requests.post(
+                f"{base}/sendMessage",
+                json={"chat_id": chat_id, "text": text},
+                timeout=10,
+            )
+        logging.info("Telegram notification sent.")
+    except Exception as e:
+        logging.warning(f"Telegram notification failed: {e}")
+
+
+def setup_telegram_wizard():
+    """Interactive helper: finds your chat_id so you can paste it into config."""
+    if not _REQUESTS:
+        sys.exit("Install requests first: pip install requests")
+    print("\n=== Telegram bot setup ===\n")
+    token = input("Paste your bot token (from @BotFather): ").strip()
+    if not token:
+        sys.exit("Token cannot be empty.")
+    print("\n1. Open Telegram and find your bot (search by its username).")
+    print("2. Send it any message, e.g.  hello")
+    input("Press Enter when done... ")
+    try:
+        r = _requests.get(f"https://api.telegram.org/bot{token}/getUpdates", timeout=10)
+        r.raise_for_status()
+        updates = r.json().get("result", [])
+    except Exception as e:
+        sys.exit(f"Could not reach Telegram API: {e}")
+    if not updates:
+        print("\nNo messages found. Make sure you sent a message to the bot and try again.")
+        return
+    chat_id = str(updates[-1]["message"]["chat"]["id"])
+    print(f"\nFound chat_id: {chat_id}")
+    print("\nAdd to ~/.laptop-monitor/config.json:")
+    snippet = {
+        "telegram": {
+            "enabled": True,
+            "bot_token": token,
+            "chat_id": chat_id,
+            "send_screenshots": True,
+            "screenshot_every_n": 3,
+        }
+    }
+    print(json.dumps(snippet, indent=2))
+    # Test message
+    answer = input("\nSend a test message to verify? [Y/n] ").strip().lower()
+    if answer != "n":
+        notify_telegram(token, chat_id, "Laptop Monitor: configuration successful!")
+        print("Done. Check your Telegram.")
+
+
+# ── ntfy notifier ─────────────────────────────────────────────────────────────
+
+def notify_ntfy(server: str, topic: str, message: str, title: str = "Laptop Monitor"):
+    if not _REQUESTS:
+        logging.warning("requests not installed — ntfy skipped (pip install requests)")
+        return
+    try:
+        _requests.post(
+            f"{server}/{topic}",
+            data=message.encode(),
+            headers={
+                "Title": title,
+                "Priority": "urgent",
+                "Tags": "warning,computer",
+            },
+            timeout=10,
+        )
+        logging.info("ntfy notification sent.")
+    except Exception as e:
+        logging.warning(f"ntfy notification failed: {e}")
+
+
 # ── main monitor class ────────────────────────────────────────────────────────
 
 class LaptopMonitor:
@@ -351,15 +459,39 @@ class LaptopMonitor:
         start = _now()
         logging.warning(f"!!! SUSPICIOUS ACTIVITY — session #{self._session} started at {start}")
 
+        webcam_photo: str | None = None
         if self.cfg.get("capture_webcam"):
-            photo = capture_webcam(SCREENSHOTS_DIR)
-            if photo:
-                self.db.log_event(self._session, "webcam_photo", photo)
-                logging.info(f"Webcam photo: {photo}")
+            webcam_photo = capture_webcam(SCREENSHOTS_DIR)
+            if webcam_photo:
+                self.db.log_event(self._session, "webcam_photo", webcam_photo)
+                logging.info(f"Webcam photo: {webcam_photo}")
+
+        # Take an immediate screenshot for the alert
+        alert_photo = webcam_photo or (self.ss.capture() if self.cfg.get("telegram", {}).get("send_screenshots") else None)
 
         self._known_procs = process_snapshot()
         self.db.log_event(self._session, "session_start", f"host={socket.gethostname()}")
+
+        # Compose alert text
+        host = socket.gethostname()
+        alert_text = (
+            f"⚠️ Ktoś używa Twojego laptopa!\n"
+            f"Host: {host}\n"
+            f"Sesja: #{self._session}\n"
+            f"Czas: {start}"
+        )
+
         send_email(self.cfg, self._session, start)
+        self._send_push(alert_text, alert_photo)
+
+    def _send_push(self, text: str, photo: str | None = None):
+        tg = self.cfg.get("telegram", {})
+        if tg.get("enabled") and tg.get("bot_token") and tg.get("chat_id"):
+            notify_telegram(tg["bot_token"], tg["chat_id"], text, photo)
+
+        ntfy_cfg = self.cfg.get("ntfy", {})
+        if ntfy_cfg.get("enabled") and ntfy_cfg.get("topic"):
+            notify_ntfy(ntfy_cfg["server"], ntfy_cfg["topic"], text)
 
     def _close_session(self):
         if self._session is not None:
@@ -378,6 +510,21 @@ class LaptopMonitor:
                 path = self.ss.capture()
                 if path:
                     self.db.log_screenshot(sid, path)
+                    # Forward every Nth screenshot to Telegram
+                    tg = self.cfg.get("telegram", {})
+                    if tg.get("enabled") and tg.get("send_screenshots"):
+                        every_n = tg.get("screenshot_every_n", 3)
+                        with self.db.connect() as c:
+                            count = c.execute(
+                                "SELECT screenshot_count FROM sessions WHERE id=?", (sid,)
+                            ).fetchone()[0]
+                        if count % every_n == 0:
+                            title = active_window_title()
+                            caption = f"Screenshot #{count}"
+                            if title:
+                                caption += f"\nOkno: {title}"
+                            self._send_push(caption, path)
+                            continue  # title already captured above
                 title = active_window_title()
                 if title:
                     self.db.log_event(sid, "window_title", title)
@@ -435,13 +582,18 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--run",     action="store_true", help="Start background daemon")
-    parser.add_argument("--arm",     action="store_true", help="Arm: begin watching")
-    parser.add_argument("--disarm",  action="store_true", help="Disarm: stop watching")
-    parser.add_argument("--status",  action="store_true", help="Show status and stats")
-    parser.add_argument("--webcam",  action="store_true", help="Arm + webcam photo on each session")
-    parser.add_argument("--config",  default=str(CONFIG_FILE), metavar="PATH")
+    parser.add_argument("--run",            action="store_true", help="Start background daemon")
+    parser.add_argument("--arm",            action="store_true", help="Arm: begin watching")
+    parser.add_argument("--disarm",         action="store_true", help="Disarm: stop watching")
+    parser.add_argument("--status",         action="store_true", help="Show status and stats")
+    parser.add_argument("--webcam",         action="store_true", help="Arm + webcam photo on each session")
+    parser.add_argument("--setup-telegram", action="store_true", help="Interactive Telegram bot setup wizard")
+    parser.add_argument("--config",         default=str(CONFIG_FILE), metavar="PATH")
     args = parser.parse_args()
+
+    if args.setup_telegram:
+        setup_telegram_wizard()
+        return
 
     m = LaptopMonitor(args.config)
 
