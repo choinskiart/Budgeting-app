@@ -1,0 +1,15 @@
+[Unit]
+Description=Laptop Activity Monitor
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.laptop-monitor/venv/bin/python %h/.laptop-monitor/monitor.py --run
+Restart=on-failure
+RestartSec=10
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=%h/.Xauthority
+
+[Install]
+WantedBy=graphical-session.target

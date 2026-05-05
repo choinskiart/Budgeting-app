@@ -1,0 +1,14 @@
+{
+  "screenshot_interval": 30,
+  "process_check_interval": 10,
+  "idle_threshold": 120,
+  "capture_webcam": false,
+  "email": {
+    "enabled": false,
+    "smtp_server": "smtp.gmail.com",
+    "smtp_port": 587,
+    "username": "twoj@gmail.com",
+    "password": "haslo-aplikacji",
+    "to": "twoj@gmail.com"
+  }
+}

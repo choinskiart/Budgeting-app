@@ -1,0 +1,461 @@
+#!/usr/bin/env python3
+"""
+Laptop Activity Monitor — Daemon
+
+Detects and logs suspicious activity on your laptop while you're away.
+
+Usage:
+    python monitor.py --run          Start the background daemon
+    python monitor.py --arm          Arm: start watching for intruders
+    python monitor.py --disarm       Disarm: stop watching (you're back)
+    python monitor.py --status       Show current state and stats
+    python monitor.py --webcam       Arm + capture webcam photo on each session
+"""
+
+import os
+import sys
+import time
+import json
+import sqlite3
+import logging
+import subprocess
+import threading
+import signal
+import smtplib
+import socket
+from datetime import datetime
+from pathlib import Path
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+# ── optional deps ────────────────────────────────────────────────────────────
+
+try:
+    from pynput import keyboard as kb, mouse as ms
+except ImportError:
+    sys.exit("Missing dependency: pip install pynput")
+
+try:
+    import mss
+    import mss.tools
+    _MSS = True
+except ImportError:
+    _MSS = False
+
+try:
+    import psutil
+    _PSUTIL = True
+except ImportError:
+    sys.exit("Missing dependency: pip install psutil")
+
+# ── paths ────────────────────────────────────────────────────────────────────
+
+DATA_DIR = Path.home() / ".laptop-monitor"
+CONFIG_FILE = DATA_DIR / "config.json"
+DB_FILE = DATA_DIR / "monitor.db"
+SCREENSHOTS_DIR = DATA_DIR / "screenshots"
+ARMED_FLAG = DATA_DIR / ".armed"
+LOG_FILE = DATA_DIR / "monitor.log"
+
+DEFAULT_CONFIG = {
+    "screenshot_interval": 30,       # seconds between screenshots during a session
+    "process_check_interval": 10,    # seconds between process-list snapshots
+    "idle_threshold": 120,           # seconds of silence before ending a session
+    "capture_webcam": False,         # take webcam photo when a new session starts
+    "email": {
+        "enabled": False,
+        "smtp_server": "smtp.gmail.com",
+        "smtp_port": 587,
+        "username": "",
+        "password": "",              # use App Password for Gmail
+        "to": ""
+    }
+}
+
+# ── database ─────────────────────────────────────────────────────────────────
+
+class Database:
+    def __init__(self, path: Path):
+        self.path = path
+        self._init_schema()
+
+    def connect(self):
+        conn = sqlite3.connect(self.path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_schema(self):
+        with self.connect() as c:
+            c.executescript("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    start_time      TEXT    NOT NULL,
+                    end_time        TEXT,
+                    hostname        TEXT,
+                    screenshot_count INTEGER DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS events (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id  INTEGER NOT NULL,
+                    timestamp   TEXT    NOT NULL,
+                    type        TEXT    NOT NULL,
+                    data        TEXT,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id)
+                );
+                CREATE TABLE IF NOT EXISTS screenshots (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id  INTEGER NOT NULL,
+                    timestamp   TEXT    NOT NULL,
+                    path        TEXT    NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id)
+                );
+            """)
+
+    def start_session(self) -> int:
+        ts = _now()
+        with self.connect() as c:
+            cur = c.execute(
+                "INSERT INTO sessions (start_time, hostname) VALUES (?, ?)",
+                (ts, socket.gethostname()),
+            )
+            return cur.lastrowid
+
+    def end_session(self, session_id: int):
+        with self.connect() as c:
+            c.execute(
+                "UPDATE sessions SET end_time = ? WHERE id = ?",
+                (_now(), session_id),
+            )
+
+    def log_event(self, session_id: int, etype: str, data: str = ""):
+        with self.connect() as c:
+            c.execute(
+                "INSERT INTO events (session_id, timestamp, type, data) VALUES (?,?,?,?)",
+                (session_id, _now(), etype, data),
+            )
+
+    def log_screenshot(self, session_id: int, path: str):
+        with self.connect() as c:
+            c.execute(
+                "INSERT INTO screenshots (session_id, timestamp, path) VALUES (?,?,?)",
+                (session_id, _now(), path),
+            )
+            c.execute(
+                "UPDATE sessions SET screenshot_count = screenshot_count + 1 WHERE id = ?",
+                (session_id,),
+            )
+
+# ── screenshot capture ────────────────────────────────────────────────────────
+
+class Screenshotter:
+    def __init__(self, out_dir: Path):
+        self.out_dir = out_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+    def capture(self) -> str | None:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = self.out_dir / f"screen_{ts}.png"
+
+        if _MSS:
+            try:
+                with mss.mss() as sct:
+                    sct.shot(output=str(path))
+                if path.exists() and path.stat().st_size > 0:
+                    return str(path)
+            except Exception as e:
+                logging.debug(f"mss failed: {e}")
+
+        for cmd in (["scrot", str(path)], ["import", "-window", "root", str(path)]):
+            try:
+                r = subprocess.run(cmd, capture_output=True, timeout=10)
+                if r.returncode == 0 and path.exists():
+                    return str(path)
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+
+        logging.warning("Screenshot capture failed — no tool available (mss/scrot/ImageMagick)")
+        return None
+
+# ── webcam capture ────────────────────────────────────────────────────────────
+
+def capture_webcam(out_dir: Path) -> str | None:
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = out_dir / f"webcam_{ts}.jpg"
+
+    for cmd in (
+        ["fswebcam", "-r", "1280x720", "--no-banner", str(path)],
+        ["ffmpeg", "-y", "-f", "v4l2", "-i", "/dev/video0", "-frames:v", "1", str(path)],
+    ):
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=15)
+            if r.returncode == 0 and path.exists() and path.stat().st_size > 0:
+                return str(path)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+    logging.warning("Webcam capture failed — fswebcam or ffmpeg not found")
+    return None
+
+# ── active window title ───────────────────────────────────────────────────────
+
+def active_window_title() -> str:
+    try:
+        r = subprocess.run(
+            ["xdotool", "getactivewindow", "getwindowname"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            return r.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+# ── process snapshot ──────────────────────────────────────────────────────────
+
+def process_snapshot() -> set[str]:
+    names: set[str] = set()
+    for p in psutil.process_iter(["name"]):
+        try:
+            names.add(p.info["name"])
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    return names
+
+# ── email alert ───────────────────────────────────────────────────────────────
+
+def send_email(cfg: dict, session_id: int, start_time: str):
+    ec = cfg.get("email", {})
+    if not ec.get("enabled"):
+        return
+    msg = MIMEMultipart()
+    msg["From"] = ec["username"]
+    msg["To"] = ec["to"]
+    msg["Subject"] = f"[LaptopMonitor] Suspicious activity on {socket.gethostname()}"
+    body = (
+        f"Suspicious activity detected!\n\n"
+        f"Host:       {socket.gethostname()}\n"
+        f"Session ID: {session_id}\n"
+        f"Started at: {start_time}\n\n"
+        f"Run 'python report.py --session {session_id}' to see details.\n"
+    )
+    msg.attach(MIMEText(body, "plain"))
+    try:
+        with smtplib.SMTP(ec["smtp_server"], ec["smtp_port"]) as srv:
+            srv.starttls()
+            srv.login(ec["username"], ec["password"])
+            srv.send_message(msg)
+        logging.info("Email alert sent.")
+    except Exception as e:
+        logging.warning(f"Email failed: {e}")
+
+# ── main monitor class ────────────────────────────────────────────────────────
+
+class LaptopMonitor:
+    def __init__(self, config_path: str | None = None):
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+        self.cfg = _load_config(config_path or str(CONFIG_FILE))
+        self.db = Database(DB_FILE)
+        self.ss = Screenshotter(SCREENSHOTS_DIR)
+
+        self._session: int | None = None
+        self._last_activity: float = 0.0
+        self._known_procs: set[str] = set()
+        self._lock = threading.Lock()
+        self._running = False
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s  %(levelname)-8s  %(message)s",
+            handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler()],
+        )
+
+    # ── public control ──────────────────────────────────────────────────────
+
+    def arm(self, with_webcam: bool = False):
+        ARMED_FLAG.touch()
+        logging.info("Monitor ARMED — watching for activity.")
+        print("Monitor armed. Any laptop activity will now be recorded.")
+        if with_webcam:
+            self.cfg["capture_webcam"] = True
+
+    def disarm(self):
+        if ARMED_FLAG.exists():
+            ARMED_FLAG.unlink()
+        with self._lock:
+            if self._session is not None:
+                self._close_session()
+        logging.info("Monitor DISARMED.")
+        print("Monitor disarmed. Welcome back!")
+
+    def status(self):
+        armed = ARMED_FLAG.exists()
+        print(f"\nStatus : {'ARMED  (monitoring active)' if armed else 'DISARMED'}")
+        with self.db.connect() as c:
+            n_s = c.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+            n_p = c.execute("SELECT COUNT(*) FROM screenshots").fetchone()[0]
+        print(f"Sessions logged   : {n_s}")
+        print(f"Screenshots taken : {n_p}")
+        if self._session:
+            print(f"Active session    : #{self._session}")
+        print(f"Data directory    : {DATA_DIR}")
+        print()
+
+    def run(self):
+        self._running = True
+        logging.info("Laptop monitor daemon started.")
+
+        for target in (self._screenshot_loop, self._process_loop, self._idle_loop):
+            threading.Thread(target=target, daemon=True).start()
+
+        kb_listener = kb.Listener(on_press=self._on_event)
+        ms_listener = ms.Listener(
+            on_move=self._on_event,
+            on_click=self._on_event,
+            on_scroll=self._on_event,
+        )
+        kb_listener.start()
+        ms_listener.start()
+
+        def _shutdown(sig, _frame):
+            logging.info("Shutting down...")
+            self._running = False
+            kb_listener.stop()
+            ms_listener.stop()
+            with self._lock:
+                if self._session:
+                    self._close_session()
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, _shutdown)
+        signal.signal(signal.SIGTERM, _shutdown)
+
+        print("Daemon running.  Use Ctrl-C or SIGTERM to stop.")
+        while self._running:
+            time.sleep(1)
+
+    # ── internal ────────────────────────────────────────────────────────────
+
+    def _on_event(self, *_args):
+        if not ARMED_FLAG.exists():
+            return
+        now = time.time()
+        with self._lock:
+            self._last_activity = now
+            if self._session is None:
+                self._open_session()
+
+    def _open_session(self):
+        self._session = self.db.start_session()
+        start = _now()
+        logging.warning(f"!!! SUSPICIOUS ACTIVITY — session #{self._session} started at {start}")
+
+        if self.cfg.get("capture_webcam"):
+            photo = capture_webcam(SCREENSHOTS_DIR)
+            if photo:
+                self.db.log_event(self._session, "webcam_photo", photo)
+                logging.info(f"Webcam photo: {photo}")
+
+        self._known_procs = process_snapshot()
+        self.db.log_event(self._session, "session_start", f"host={socket.gethostname()}")
+        send_email(self.cfg, self._session, start)
+
+    def _close_session(self):
+        if self._session is not None:
+            self.db.log_event(self._session, "session_end")
+            self.db.end_session(self._session)
+            logging.info(f"Session #{self._session} closed.")
+            self._session = None
+
+    def _screenshot_loop(self):
+        interval = self.cfg.get("screenshot_interval", 30)
+        while self._running:
+            time.sleep(interval)
+            with self._lock:
+                sid = self._session
+            if sid is not None and ARMED_FLAG.exists():
+                path = self.ss.capture()
+                if path:
+                    self.db.log_screenshot(sid, path)
+                title = active_window_title()
+                if title:
+                    self.db.log_event(sid, "window_title", title)
+
+    def _process_loop(self):
+        interval = self.cfg.get("process_check_interval", 10)
+        while self._running:
+            time.sleep(interval)
+            with self._lock:
+                sid = self._session
+            if sid is not None and ARMED_FLAG.exists():
+                current = process_snapshot()
+                for name in current - self._known_procs:
+                    self.db.log_event(sid, "new_process", name)
+                    logging.info(f"New process: {name}")
+                self._known_procs = current
+
+    def _idle_loop(self):
+        threshold = self.cfg.get("idle_threshold", 120)
+        while self._running:
+            time.sleep(15)
+            with self._lock:
+                if self._session is not None and self._last_activity > 0:
+                    idle = time.time() - self._last_activity
+                    if idle > threshold:
+                        logging.info(f"Idle for {idle:.0f}s — closing session.")
+                        self._close_session()
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _load_config(path: str) -> dict:
+    cfg = dict(DEFAULT_CONFIG)
+    p = Path(path)
+    if p.exists():
+        with open(p) as f:
+            cfg.update(json.load(f))
+    else:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "w") as f:
+            json.dump(DEFAULT_CONFIG, f, indent=2)
+        print(f"Default config written to {p}")
+    return cfg
+
+# ── CLI entry point ───────────────────────────────────────────────────────────
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Laptop Activity Monitor",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument("--run",     action="store_true", help="Start background daemon")
+    parser.add_argument("--arm",     action="store_true", help="Arm: begin watching")
+    parser.add_argument("--disarm",  action="store_true", help="Disarm: stop watching")
+    parser.add_argument("--status",  action="store_true", help="Show status and stats")
+    parser.add_argument("--webcam",  action="store_true", help="Arm + webcam photo on each session")
+    parser.add_argument("--config",  default=str(CONFIG_FILE), metavar="PATH")
+    args = parser.parse_args()
+
+    m = LaptopMonitor(args.config)
+
+    if args.arm or args.webcam:
+        m.arm(with_webcam=args.webcam)
+    elif args.disarm:
+        m.disarm()
+    elif args.status:
+        m.status()
+    elif args.run:
+        m.run()
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
