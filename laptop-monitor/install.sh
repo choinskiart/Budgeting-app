@@ -56,7 +56,7 @@ fi
 
 # ── 5. Autostart ──────────────────────────────────────────────────────────────
 read -rp "[5/5] Install autostart (daemon runs at login)? [y/N] " REPLY
-if [[ "${REPLY,,}" == "y" ]]; then
+if [[ "$(echo "$REPLY" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
     if [[ "$PLATFORM" == "Darwin" ]]; then
         # macOS — LaunchAgent
         PLIST_DIR="$HOME/Library/LaunchAgents"
