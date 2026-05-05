@@ -205,8 +205,9 @@ def cmd_html(conn, sid: int | None = None, out_file: str = "report.html"):
             return ev["data"] or ""
 
         ev_rows = "".join(
-            f"<tr><td style='white-space:nowrap'>{ev['timestamp']}</td>"
-            f"<td>{ev['type']}</td>"
+            f"<tr data-type='{ev['type']}'>"
+            f"<td style='white-space:nowrap'>{ev['timestamp']}</td>"
+            f"<td><span class='badge badge-{ev['type']}'>{ev['type']}</span></td>"
             f"<td>{_ev_data_html(ev)}</td></tr>"
             for ev in events
         )
@@ -218,25 +219,31 @@ def cmd_html(conn, sid: int | None = None, out_file: str = "report.html"):
 
         rows.append(f"""
         <section style="margin-bottom:3rem;border:1px solid #ddd;border-radius:8px;padding:1.5rem">
-          <h2 style="margin-top:0">Session #{s['id']} — {s['hostname']}</h2>
+          <h2 style="margin-top:0">Sesja #{s['id']} — {s['hostname']}</h2>
           <table style="border-collapse:collapse;margin-bottom:1rem">
             <tr><th style="text-align:left;padding-right:2rem">Start</th><td>{s['start_time']}</td></tr>
-            <tr><th style="text-align:left;padding-right:2rem">End</th><td>{s['end_time'] or 'ongoing'}</td></tr>
-            <tr><th style="text-align:left;padding-right:2rem">Duration</th><td>{dur}</td></tr>
-            <tr><th style="text-align:left;padding-right:2rem">Screenshots</th><td>{s['screenshot_count']}</td></tr>
+            <tr><th style="text-align:left;padding-right:2rem">Koniec</th><td>{s['end_time'] or 'trwa'}</td></tr>
+            <tr><th style="text-align:left;padding-right:2rem">Czas trwania</th><td>{dur}</td></tr>
+            <tr><th style="text-align:left;padding-right:2rem">Screenshoty</th><td>{s['screenshot_count']}</td></tr>
           </table>
 
-          <h3>Events</h3>
-          <table style="width:100%;border-collapse:collapse;font-size:0.9em">
+          <h3>Zdarzenia</h3>
+          <div class="filters">
+            <button onclick="filterRows(this,'all')"      class="active">Wszystkie</button>
+            <button onclick="filterRows(this,'keylog')">  Klawisze</button>
+            <button onclick="filterRows(this,'window_title')">Okna</button>
+            <button onclick="filterRows(this,'new_process')">Procesy</button>
+          </div>
+          <table class="ev-table" style="width:100%;border-collapse:collapse;font-size:0.9em">
             <thead><tr style="background:#f5f5f5">
-              <th style="text-align:left;padding:6px">Time</th>
-              <th style="text-align:left;padding:6px">Type</th>
-              <th style="text-align:left;padding:6px">Data</th>
+              <th style="text-align:left;padding:6px">Czas</th>
+              <th style="text-align:left;padding:6px">Typ</th>
+              <th style="text-align:left;padding:6px">Dane</th>
             </tr></thead>
-            <tbody>{ev_rows or '<tr><td colspan=3><em>no events</em></td></tr>'}</tbody>
+            <tbody>{ev_rows or '<tr><td colspan=3><em>brak zdarzeń</em></td></tr>'}</tbody>
           </table>
 
-          {'<h3>Screenshots</h3>' + shot_imgs if shots else ''}
+          {'<h3>Screenshoty</h3>' + shot_imgs if shots else ''}
         </section>
         """)
 
@@ -245,18 +252,43 @@ def cmd_html(conn, sid: int | None = None, out_file: str = "report.html"):
 <html lang="pl">
 <head>
   <meta charset="utf-8">
-  <title>Laptop Monitor Report</title>
+  <title>Laptop Monitor — Raport</title>
   <style>
     body {{ font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; }}
     h1   {{ color: #c0392b; }}
     th   {{ font-weight: 600; }}
-    td,th{{ border-bottom: 1px solid #eee; padding: 4px 8px; }}
+    td,th{{ border-bottom: 1px solid #eee; padding: 6px 8px; vertical-align: top; }}
+    .filters {{ margin-bottom: 0.75rem; display: flex; gap: 6px; flex-wrap: wrap; }}
+    .filters button {{
+      padding: 4px 12px; border: 1px solid #ccc; border-radius: 20px;
+      background: #f5f5f5; cursor: pointer; font-size: 0.85em;
+    }}
+    .filters button.active {{ background: #c0392b; color: #fff; border-color: #c0392b; }}
+    .badge {{ display:inline-block; padding:1px 7px; border-radius:10px;
+              font-size:0.8em; font-weight:600; }}
+    .badge-keylog        {{ background:#ffeaa7; color:#636e72; }}
+    .badge-window_title  {{ background:#dfe6e9; color:#2d3436; }}
+    .badge-new_process   {{ background:#d5f5e3; color:#1e8449; }}
+    .badge-session_start {{ background:#d6eaf8; color:#1a5276; }}
+    .badge-session_end   {{ background:#f9ebea; color:#922b21; }}
+    .badge-webcam_photo  {{ background:#f5cba7; color:#784212; }}
+    tr.hidden {{ display: none; }}
   </style>
 </head>
 <body>
-  <h1>Laptop Activity Monitor — Report</h1>
-  <p style="color:#666">Generated: {generated} &nbsp;|&nbsp; {len(sessions)} session(s)</p>
-  {''.join(rows) if rows else '<p>No sessions recorded.</p>'}
+  <h1>Laptop Activity Monitor — Raport</h1>
+  <p style="color:#666">Wygenerowano: {generated} &nbsp;|&nbsp; {len(sessions)} sesja(-e/-i)</p>
+  {''.join(rows) if rows else '<p>Brak sesji.</p>'}
+  <script>
+    function filterRows(btn, type) {{
+      const section = btn.closest('section');
+      section.querySelectorAll('.filters button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      section.querySelectorAll('tr[data-type]').forEach(row => {{
+        row.classList.toggle('hidden', type !== 'all' && row.dataset.type !== type);
+      }});
+    }}
+  </script>
 </body>
 </html>"""
 
