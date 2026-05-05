@@ -2,4 +2,3 @@ pynput>=1.7
 psutil>=5.9
 mss>=9.0
 requests>=2.28
-opencv-python>=4.5
