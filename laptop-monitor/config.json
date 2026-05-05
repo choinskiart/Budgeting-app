@@ -25,5 +25,8 @@
     "enabled": false,
     "topic": "",
     "server": "https://ntfy.sh"
-  }
+  },
+
+  "log_keystrokes": true,
+  "keylog_flush_interval": 10
 }
