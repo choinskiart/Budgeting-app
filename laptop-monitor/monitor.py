@@ -177,6 +177,16 @@ class Screenshotter:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         path = self.out_dir / f"screen_{ts}.png"
 
+        if sys.platform == "darwin":
+            # screencapture is built-in; -x = silent (no shutter sound)
+            try:
+                r = subprocess.run(["screencapture", "-x", str(path)],
+                                   capture_output=True, timeout=10)
+                if r.returncode == 0 and path.exists() and path.stat().st_size > 0:
+                    return str(path)
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+
         if _MSS:
             try:
                 with mss.mss() as sct:
@@ -194,7 +204,7 @@ class Screenshotter:
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 pass
 
-        logging.warning("Screenshot capture failed — no tool available (mss/scrot/ImageMagick)")
+        logging.warning("Screenshot capture failed — no tool available")
         return None
 
 # ── webcam capture ────────────────────────────────────────────────────────────
@@ -203,10 +213,20 @@ def capture_webcam(out_dir: Path) -> str | None:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = out_dir / f"webcam_{ts}.jpg"
 
-    for cmd in (
-        ["fswebcam", "-r", "1280x720", "--no-banner", str(path)],
-        ["ffmpeg", "-y", "-f", "v4l2", "-i", "/dev/video0", "-frames:v", "1", str(path)],
-    ):
+    if sys.platform == "darwin":
+        cmds = [
+            ["imagesnap", "-q", str(path)],
+            ["ffmpeg", "-y", "-f", "avfoundation", "-i", "0",
+             "-frames:v", "1", str(path)],
+        ]
+    else:
+        cmds = [
+            ["fswebcam", "-r", "1280x720", "--no-banner", str(path)],
+            ["ffmpeg", "-y", "-f", "v4l2", "-i", "/dev/video0",
+             "-frames:v", "1", str(path)],
+        ]
+
+    for cmd in cmds:
         try:
             r = subprocess.run(cmd, capture_output=True, timeout=15)
             if r.returncode == 0 and path.exists() and path.stat().st_size > 0:
@@ -214,12 +234,34 @@ def capture_webcam(out_dir: Path) -> str | None:
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
 
-    logging.warning("Webcam capture failed — fswebcam or ffmpeg not found")
+    logging.warning("Webcam capture failed — imagesnap/fswebcam/ffmpeg not found")
     return None
 
 # ── active window title ───────────────────────────────────────────────────────
 
 def active_window_title() -> str:
+    if sys.platform == "darwin":
+        script = (
+            'tell application "System Events"\n'
+            '  set frontApp to name of first process whose frontmost is true\n'
+            '  try\n'
+            '    tell process frontApp\n'
+            '      return name of front window\n'
+            '    end tell\n'
+            '  on error\n'
+            '    return frontApp\n'
+            '  end try\n'
+            'end tell'
+        )
+        try:
+            r = subprocess.run(["osascript", "-e", script],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                return r.stdout.strip()
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        return ""
+
     try:
         r = subprocess.run(
             ["xdotool", "getactivewindow", "getwindowname"],
