@@ -439,43 +439,39 @@ class AudioRecorder:
 
     def _record_loop(self, session_id: int, db: Database):
         try:
-            import pyaudio
+            import sounddevice as sd
             import wave
+            import numpy as np
         except ImportError:
-            logging.warning("pyaudio not installed — audio disabled (pip install pyaudio)")
+            logging.warning("sounddevice not installed — audio disabled "
+                            "(pip install sounddevice)")
             return
 
-        p = pyaudio.PyAudio()
-        try:
-            while not self._stop.is_set():
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                path = self.out_dir / f"audio_{ts}.wav"
-                try:
-                    stream = p.open(format=pyaudio.paInt16, channels=self.CHANNELS,
-                                    rate=self.RATE, input=True,
-                                    frames_per_buffer=self.CHUNK)
-                    frames = []
-                    n = int(self.RATE / self.CHUNK * self.chunk_seconds)
-                    for _ in range(n):
-                        if self._stop.is_set():
-                            break
-                        frames.append(stream.read(self.CHUNK, exception_on_overflow=False))
-                    stream.stop_stream()
-                    stream.close()
+        while not self._stop.is_set():
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = self.out_dir / f"audio_{ts}.wav"
+            try:
+                frames = []
+                with sd.InputStream(samplerate=self.RATE, channels=self.CHANNELS,
+                                    dtype="int16", blocksize=self.CHUNK) as stream:
+                    deadline = time.time() + self.chunk_seconds
+                    while not self._stop.is_set() and time.time() < deadline:
+                        data, _ = stream.read(self.CHUNK)
+                        frames.append(data.copy())
 
-                    if frames:
-                        with wave.open(str(path), "wb") as wf:
-                            wf.setnchannels(self.CHANNELS)
-                            wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
-                            wf.setframerate(self.RATE)
-                            wf.writeframes(b"".join(frames))
-                        db.log_event(session_id, "audio", str(path))
-                        logging.info(f"Audio chunk: {path}")
-                except Exception as e:
-                    logging.warning(f"Audio chunk error: {e}")
-                    self._stop.wait(5)
-        finally:
-            p.terminate()
+                if frames:
+                    import numpy as np
+                    audio = np.concatenate(frames, axis=0)
+                    with wave.open(str(path), "wb") as wf:
+                        wf.setnchannels(self.CHANNELS)
+                        wf.setsampwidth(2)   # int16 = 2 bytes
+                        wf.setframerate(self.RATE)
+                        wf.writeframes(audio.tobytes())
+                    db.log_event(session_id, "audio", str(path))
+                    logging.info(f"Audio chunk: {path}")
+            except Exception as e:
+                logging.warning(f"Audio chunk error: {e}")
+                self._stop.wait(5)
 
 
 # ── keystroke formatting ──────────────────────────────────────────────────────
