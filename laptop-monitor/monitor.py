@@ -417,6 +417,67 @@ def notify_ntfy(server: str, topic: str, message: str, title: str = "Laptop Moni
         logging.warning(f"ntfy notification failed: {e}")
 
 
+# ── audio recorder ────────────────────────────────────────────────────────────
+
+class AudioRecorder:
+    RATE     = 44100
+    CHANNELS = 1
+    CHUNK    = 1024
+
+    def __init__(self, out_dir: Path, chunk_minutes: int = 2):
+        self.out_dir = out_dir
+        self.chunk_seconds = chunk_minutes * 60
+        self._stop = threading.Event()
+
+    def start(self, session_id: int, db: Database):
+        self._stop.clear()
+        threading.Thread(target=self._record_loop, args=(session_id, db),
+                         daemon=True).start()
+
+    def stop(self):
+        self._stop.set()
+
+    def _record_loop(self, session_id: int, db: Database):
+        try:
+            import pyaudio
+            import wave
+        except ImportError:
+            logging.warning("pyaudio not installed — audio disabled (pip install pyaudio)")
+            return
+
+        p = pyaudio.PyAudio()
+        try:
+            while not self._stop.is_set():
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                path = self.out_dir / f"audio_{ts}.wav"
+                try:
+                    stream = p.open(format=pyaudio.paInt16, channels=self.CHANNELS,
+                                    rate=self.RATE, input=True,
+                                    frames_per_buffer=self.CHUNK)
+                    frames = []
+                    n = int(self.RATE / self.CHUNK * self.chunk_seconds)
+                    for _ in range(n):
+                        if self._stop.is_set():
+                            break
+                        frames.append(stream.read(self.CHUNK, exception_on_overflow=False))
+                    stream.stop_stream()
+                    stream.close()
+
+                    if frames:
+                        with wave.open(str(path), "wb") as wf:
+                            wf.setnchannels(self.CHANNELS)
+                            wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
+                            wf.setframerate(self.RATE)
+                            wf.writeframes(b"".join(frames))
+                        db.log_event(session_id, "audio", str(path))
+                        logging.info(f"Audio chunk: {path}")
+                except Exception as e:
+                    logging.warning(f"Audio chunk error: {e}")
+                    self._stop.wait(5)
+        finally:
+            p.terminate()
+
+
 # ── keystroke formatting ──────────────────────────────────────────────────────
 
 _SPECIAL_KEYS = {
@@ -494,6 +555,8 @@ class LaptopMonitor:
         self._lock = threading.Lock()
         self._running = False
         self._key_buf = KeystrokeBuffer()
+        self._audio = AudioRecorder(SCREENSHOTS_DIR,
+                                    chunk_minutes=self.cfg.get("audio_chunk_minutes", 2))
 
         logging.basicConfig(
             level=logging.INFO,
@@ -606,6 +669,8 @@ class LaptopMonitor:
 
         self._known_procs = process_snapshot()
         self.db.log_event(self._session, "session_start", f"host={socket.gethostname()}")
+        if self.cfg.get("record_audio", True):
+            self._audio.start(self._session, self.db)
 
         # Compose alert text
         host = socket.gethostname()
@@ -630,6 +695,7 @@ class LaptopMonitor:
 
     def _close_session(self):
         if self._session is not None:
+            self._audio.stop()
             # Flush remaining keystrokes before closing
             text = self._key_buf.flush()
             if text:

@@ -217,6 +217,17 @@ def cmd_html(conn, sid: int | None = None, out_file: str = "report.html"):
             for sh in shots
         )
 
+        audio_events = conn.execute(
+            "SELECT timestamp, data FROM events WHERE session_id=? AND type='audio' ORDER BY timestamp",
+            (s["id"],),
+        ).fetchall()
+        audio_players = "".join(
+            f'<div style="margin:8px 0"><p style="margin:0 0 4px;font-size:0.85em;color:#666">{a["timestamp"]}</p>'
+            f'<audio controls src="file://{a["data"]}" style="width:100%"></audio></div>'
+            for a in audio_events
+            if a["data"] and Path(a["data"]).exists()
+        )
+
         rows.append(f"""
         <section style="margin-bottom:3rem;border:1px solid #ddd;border-radius:8px;padding:1.5rem">
           <h2 style="margin-top:0">Sesja #{s['id']} — {s['hostname']}</h2>
@@ -244,6 +255,7 @@ def cmd_html(conn, sid: int | None = None, out_file: str = "report.html"):
           </table>
 
           {'<h3>Screenshoty</h3>' + shot_imgs if shots else ''}
+          {'<h3>Nagrania audio</h3>' + audio_players if audio_players else ''}
         </section>
         """)
 
