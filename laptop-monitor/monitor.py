@@ -64,14 +64,12 @@ CONFIG_FILE = DATA_DIR / "config.json"
 DB_FILE = DATA_DIR / "monitor.db"
 SCREENSHOTS_DIR = DATA_DIR / "screenshots"
 ARMED_FLAG = DATA_DIR / ".armed"
-WEBCAM_FLAG = DATA_DIR / ".webcam"
 LOG_FILE = DATA_DIR / "monitor.log"
 
 DEFAULT_CONFIG = {
     "screenshot_interval": 30,       # seconds between screenshots during a session
     "process_check_interval": 10,    # seconds between process-list snapshots
     "idle_threshold": 120,           # seconds of silence before ending a session
-    "capture_webcam": False,         # take webcam photo when a new session starts
     "email": {
         "enabled": False,
         "smtp_server": "smtp.gmail.com",
@@ -209,50 +207,6 @@ class Screenshotter:
 
         logging.warning("Screenshot capture failed — no tool available")
         return None
-
-# ── webcam capture ────────────────────────────────────────────────────────────
-
-def capture_webcam(out_dir: Path) -> str | None:
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = out_dir / f"webcam_{ts}.jpg"
-
-    # Try opencv first — works on all platforms, no external tools needed
-    try:
-        import cv2
-        cap = cv2.VideoCapture(0)
-        if cap.isOpened():
-            ret, frame = cap.read()
-            cap.release()
-            if ret:
-                cv2.imwrite(str(path), frame)
-                if path.exists() and path.stat().st_size > 0:
-                    return str(path)
-    except ImportError:
-        pass
-
-    if sys.platform == "darwin":
-        cmds = [
-            ["imagesnap", "-q", str(path)],
-            ["ffmpeg", "-y", "-f", "avfoundation", "-i", "0",
-             "-frames:v", "1", str(path)],
-        ]
-    else:
-        cmds = [
-            ["fswebcam", "-r", "1280x720", "--no-banner", str(path)],
-            ["ffmpeg", "-y", "-f", "v4l2", "-i", "/dev/video0",
-             "-frames:v", "1", str(path)],
-        ]
-
-    for cmd in cmds:
-        try:
-            r = subprocess.run(cmd, capture_output=True, timeout=15)
-            if r.returncode == 0 and path.exists() and path.stat().st_size > 0:
-                return str(path)
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-
-    logging.warning("Webcam capture failed — imagesnap/fswebcam/ffmpeg not found")
-    return None
 
 # ── active window title ───────────────────────────────────────────────────────
 
@@ -562,17 +516,12 @@ class LaptopMonitor:
 
     # ── public control ──────────────────────────────────────────────────────
 
-    def arm(self, with_webcam: bool = False):
+    def arm(self):
         ARMED_FLAG.touch()
-        if with_webcam:
-            WEBCAM_FLAG.touch()
-        else:
-            WEBCAM_FLAG.unlink(missing_ok=True)
         logging.info("Monitor ARMED — watching for activity.")
         print("Monitor armed. Any laptop activity will now be recorded.")
 
     def disarm(self):
-        WEBCAM_FLAG.unlink(missing_ok=True)
         if ARMED_FLAG.exists():
             ARMED_FLAG.unlink()
         with self._lock:
@@ -653,15 +602,8 @@ class LaptopMonitor:
         start = _now()
         logging.warning(f"!!! SUSPICIOUS ACTIVITY — session #{self._session} started at {start}")
 
-        webcam_photo: str | None = None
-        if WEBCAM_FLAG.exists() or self.cfg.get("capture_webcam"):
-            webcam_photo = capture_webcam(SCREENSHOTS_DIR)
-            if webcam_photo:
-                self.db.log_event(self._session, "webcam_photo", webcam_photo)
-                logging.info(f"Webcam photo: {webcam_photo}")
-
         # Take an immediate screenshot for the alert
-        alert_photo = webcam_photo or (self.ss.capture() if self.cfg.get("telegram", {}).get("send_screenshots") else None)
+        alert_photo = self.ss.capture() if self.cfg.get("telegram", {}).get("send_screenshots") else None
 
         self._known_procs = process_snapshot()
         self.db.log_event(self._session, "session_start", f"host={socket.gethostname()}")
@@ -798,7 +740,6 @@ def main():
     parser.add_argument("--arm",            action="store_true", help="Arm: begin watching")
     parser.add_argument("--disarm",         action="store_true", help="Disarm: stop watching")
     parser.add_argument("--status",         action="store_true", help="Show status and stats")
-    parser.add_argument("--webcam",         action="store_true", help="Arm + webcam photo on each session")
     parser.add_argument("--setup-telegram", action="store_true", help="Interactive Telegram bot setup wizard")
     parser.add_argument("--config",         default=str(CONFIG_FILE), metavar="PATH")
     args = parser.parse_args()
@@ -809,8 +750,8 @@ def main():
 
     m = LaptopMonitor(args.config)
 
-    if args.arm or args.webcam:
-        m.arm(with_webcam=args.webcam)
+    if args.arm:
+        m.arm()
     elif args.disarm:
         m.disarm()
     elif args.status:
